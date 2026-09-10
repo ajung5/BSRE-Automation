@@ -2,6 +2,7 @@ import gspread
 import requests
 import time
 import os
+import sys
 
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -274,7 +275,11 @@ def proses_google_sheet():
     jumlah_nik_kosong = 0
     jumlah_error = 0
 
-    for nomor_baris in tqdm(semua_row_data, total=len(semua_row_data), desc="Checking NIK"):
+    for nomor_baris in tqdm(
+    semua_row_data,
+    total=len(semua_row_data),
+    desc="Checking NIK",
+    disable=not sys.stdout.isatty()):
 
         if nomor_baris > len(data):
             continue
