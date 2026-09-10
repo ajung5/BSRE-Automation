@@ -2,7 +2,7 @@ $BaseDir = "C:\BSRE-Automation"
 
 $Python = "$BaseDir\venv\Scripts\python.exe"
 
-$Script = "$BaseDir\cek_nik_bsre_spreadseheet_merge.py"
+$Script = "$BaseDir\ek_nik_bsre_spreadseheet_merge_all_rows.py"
 
 $LogDir = "$BaseDir\logs"
 
