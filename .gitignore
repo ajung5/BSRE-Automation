@@ -1,0 +1,26 @@
+# Environment / Secrets
+.env
+*.env
+
+# Google Service Account Credentials
+google_credentials.json
+*credentials*.json
+
+# Logs
+#logs/
+# *.log
+
+# Python Virtual Environment
+venv/
+.venv/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+
+# VS Code local settings
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
