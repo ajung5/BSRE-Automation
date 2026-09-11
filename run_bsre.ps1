@@ -30,7 +30,7 @@ $bulan = @(
     "Jul", "Agu", "Sep", "Okt", "Nov", "Des"
 )
 
-$DateTime = "{0:D2}-{1}-{2}_{3:HH-mm-ss}" -f `
+$DateTime = "{0:D2}-{1}-{2}_{3:HHmmss}" -f `
     $StartTime.Day,
     $bulan[$StartTime.Month - 1],
     $StartTime.Year,

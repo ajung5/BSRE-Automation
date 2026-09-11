@@ -1,7 +1,7 @@
 BSRE FILTERED CERTIFICATE SYNC
 ======================================================================
-Start Time : 11-Sep-2026_18:40:06
-Log File   : C:\BSRE-Automation\logs\cek_nik_bsre_spreadseheet_merge_2026-09-11_184006.log
+Start Time : 11-Sep-2026_18:53:28
+Log File   : C:\BSRE-Automation\logs\cek_nik_bsre_spreadseheet_merge_2026-09-11_185328.log
 
 ======================================================================
  CEK STATUS DAN TANGGAL SERTIFIKAT ELEKTRONIK BSrE
@@ -75,7 +75,7 @@ Write : HANYA CELL O/P/Q/R YANG BERUBAH
 Row hidden oleh filter atau user tidak diproses.
 
 
-End Time   : 11-Sep-2026_18:40:52
-Duration   : 00:00:45
-BSRE Sync SUCCESS : 2026-09-11 18:40:52
+End Time   : 11-Sep-2026_18:53:45
+Duration   : 00:00:17
+BSRE Sync SUCCESS : 2026-09-11 18:53:45
 ============================================================

@@ -109,7 +109,7 @@ def mulai_logging():
     Membuat file log baru untuk setiap eksekusi script.
 
     File disimpan di:
-        ./logs/cek_nik_bsre_spreadseheet_merge_YYYY-MM-DD_HHMMSS.log
+        ./logs/bsre_ManualCheck_YYYY-MM-DD_HHMMSS.log
     """
     os.makedirs(LOG_DIR, exist_ok=True)
 
