@@ -1,9 +1,7 @@
 $BaseDir = "C:\BSRE-Automation"
 
 $Python = "$BaseDir\venv\Scripts\python.exe"
-
 $Script = "$BaseDir\cek_nik_bsre_spreadseheet_merge_all_rows.py"
-
 $LogDir = "$BaseDir\logs"
 
 
@@ -17,6 +15,13 @@ if (!(Test-Path $LogDir)) {
 
 
 # ==========================================
+# WAKTU MULAI
+# ==========================================
+
+$StartTime = Get-Date
+
+
+# ==========================================
 # FILE LOG BERDASARKAN TANGGAL
 # ==========================================
 
@@ -25,13 +30,11 @@ $bulan = @(
     "Jul", "Agu", "Sep", "Okt", "Nov", "Des"
 )
 
-$now = Get-Date
-
 $DateTime = "{0:D2}-{1}-{2}_{3:HH-mm-ss}" -f `
-    $now.Day,
-    $bulan[$now.Month - 1],
-    $now.Year,
-    $now
+    $StartTime.Day,
+    $bulan[$StartTime.Month - 1],
+    $StartTime.Year,
+    $StartTime
 
 $LogFile = "$LogDir\bsre_$DateTime.log"
 
@@ -50,7 +53,7 @@ Set-Location $BaseDir
 "============================================================" |
     Out-File $LogFile -Append
 
-"BSRE Sync Start : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" |
+"BSRE Sync Start : $($StartTime.ToString('yyyy-MM-dd HH:mm:ss'))" |
     Out-File $LogFile -Append
 
 "============================================================" |
@@ -61,24 +64,20 @@ Set-Location $BaseDir
 # JALANKAN SCRIPT
 # ==========================================
 
+$ExitCode = 1
+$Status = "ERROR"
+
 try {
 
     & $Python $Script *>> $LogFile
 
     $ExitCode = $LASTEXITCODE
 
-
     if ($ExitCode -eq 0) {
-
-        "BSRE Sync SUCCESS : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" |
-            Out-File $LogFile -Append
-
+        $Status = "SUCCESS"
     }
     else {
-
-        "BSRE Sync FAILED - Exit Code: $ExitCode" |
-            Out-File $LogFile -Append
-
+        $Status = "FAILED"
     }
 
 }
@@ -87,10 +86,62 @@ catch {
     "ERROR : $($_.Exception.Message)" |
         Out-File $LogFile -Append
 
-    exit 1
-
+    $ExitCode = 1
+    $Status = "ERROR"
 }
 
+
+# ==========================================
+# END TIME & DURATION
+# ==========================================
+
+$EndTime = Get-Date
+$Duration = $EndTime - $StartTime
+
+$TotalHours = [math]::Floor($Duration.TotalHours)
+$DurationText = "{0:D2}:{1:D2}:{2:D2}" -f `
+    [int]$TotalHours,
+    [int]$Duration.Minutes,
+    [int]$Duration.Seconds
+
+$EndTimeText = "{0:D2}-{1}-{2}_{3:HH:mm:ss}" -f `
+    $EndTime.Day,
+    $bulan[$EndTime.Month - 1],
+    $EndTime.Year,
+    $EndTime
+
+
+# ==========================================
+# END LOG
+# ==========================================
+
+"" |
+    Out-File $LogFile -Append
+
+"End Time   : $EndTimeText" |
+    Out-File $LogFile -Append
+
+"Duration   : $DurationText" |
+    Out-File $LogFile -Append
+
+if ($Status -eq "SUCCESS") {
+
+    "BSRE Sync SUCCESS : $($EndTime.ToString('yyyy-MM-dd HH:mm:ss'))" |
+        Out-File $LogFile -Append
+
+}
+elseif ($Status -eq "FAILED") {
+
+    "BSRE Sync FAILED - Exit Code: $ExitCode : $($EndTime.ToString('yyyy-MM-dd HH:mm:ss'))" |
+        Out-File $LogFile -Append
+
+}
+else {
+
+    "BSRE Sync ERROR : $($EndTime.ToString('yyyy-MM-dd HH:mm:ss'))" |
+        Out-File $LogFile -Append
+
+}
 
 "============================================================" |
     Out-File $LogFile -Append
