@@ -33,18 +33,80 @@ Kedua script menggunakan mekanisme **differential update**, yaitu hanya cell pad
 - Menampilkan statistik hasil pengecekan pada akhir proses.
 - Menyediakan PowerShell wrapper untuk automation di Windows.
 - Menyimpan output automation ke file log.
-- Menyediakan unit test untuk memvalidasi kedua mode tanpa mengubah Google Sheets atau mengakses API BSrE nyata.
+- Menyediakan unit test untuk memvalidasi logic tanpa mengubah Google Sheets atau mengakses API BSrE nyata.
 
 ---
 
-# Struktur Repository
+## Alur Kerja
+
+### Mode Filtered
+
+```text
+Google Spreadsheet
+        |
+        v
+Deteksi row yang terlihat
+        |
+        +--> hiddenByFilter = true --> SKIP
+        |
+        +--> hiddenByUser = true ----> SKIP
+        |
+        v
+     Ambil NIK
+        |
+        +-------------------------+
+        |                         |
+        v                         v
+/api/user/status/{nik}    /api/user/profile/{nik}
+        |                         |
+        v                         v
+ Status Pengguna           Tanggal Sertifikat
+ Status Sertifikat         Terbit / Berakhir
+        |                         |
+        +------------+------------+
+                     |
+                     v
+              Bandingkan O:P:Q:R
+                     |
+             +-------+-------+
+             |               |
+           Sama            Berubah
+             |               |
+           SKIP        Update cell saja
+```
+
+### Mode All Rows
+
+```text
+Google Spreadsheet
+        |
+        v
+Ambil seluruh row data
+        |
+        v
+     Ambil NIK
+        |
+        v
+Cek API BSrE
+        |
+        v
+Bandingkan O:P:Q:R
+        |
+        v
+Update hanya cell yang berubah
+```
+
+---
+
+## Struktur Repository
 
 ```text
 BSRE-Automation/
 ├── cek_nik_bsre_spreadseheet_merge.py
 ├── cek_nik_bsre_spreadseheet_merge_all_rows.py
 ├── run_bsre.ps1
-├── tests/
+├── test/
+│   ├── test_cek_nik_bsre.py
 │   └── test_both_bsre_modes.py
 ├── .gitignore
 ├── README.md
@@ -56,7 +118,9 @@ BSRE-Automation/
 
 ---
 
-# Kolom Google Spreadsheet
+## Kolom Google Spreadsheet
+
+Script menggunakan kolom berikut:
 
 | Kolom | Fungsi |
 |---|---|
@@ -66,18 +130,36 @@ BSRE-Automation/
 | `Q` | Tanggal terbit |
 | `R` | Tanggal berakhir |
 
-Script memastikan:
+Script juga memastikan header:
 
 ```text
 Q1 = Tanggal terbit
 R1 = Tanggal berakhir
 ```
 
+Tanggal dikirim ke Google Sheets dalam format:
+
+```text
+YYYY-MM-DD
+```
+
+agar dikenali sebagai tipe **Date**, kemudian tampilan kolom `Q:R` diformat menjadi:
+
+```text
+dd-mmm-yyyy
+```
+
+Contoh:
+
+```text
+12-Agu-2026
+```
+
 ---
 
-# Differential Update
+## Differential Update
 
-Script membandingkan hasil terbaru dari API dengan nilai yang sudah ada di spreadsheet.
+Sebelum melakukan write, script membandingkan data hasil API dengan nilai yang saat ini ada di spreadsheet.
 
 Contoh:
 
@@ -104,7 +186,9 @@ Q -> sama    -> tidak di-update
 R -> sama    -> tidak di-update
 ```
 
-Tanggal dinormalisasi sebelum dibandingkan sehingga nilai seperti:
+Pada contoh tersebut hanya cell kolom `P` yang ditulis kembali.
+
+Format tanggal dinormalisasi sebelum dibandingkan, sehingga nilai seperti:
 
 ```text
 12-Agu-2026
@@ -112,11 +196,11 @@ Tanggal dinormalisasi sebelum dibandingkan sehingga nilai seperti:
 12/08/2026
 ```
 
-dianggap sebagai tanggal yang sama.
+dianggap tanggal yang sama.
 
 ---
 
-# Mapping Status BSrE
+## Mapping Status BSrE
 
 | Status API | Status Pengguna | Status Sertifikat |
 |---|---|---|
@@ -131,16 +215,17 @@ dianggap sebagai tanggal yang sama.
 
 # Persyaratan
 
+## Sistem
+
 Direkomendasikan:
 
-- Python 3.10+
-- Windows 10/11 atau Windows Server untuk automation
-- macOS/Linux untuk penggunaan manual
-- PowerShell untuk wrapper Windows
-- Google Service Account
-- credential API BSrE yang valid
+- Windows 10 / Windows 11 / Windows Server, atau macOS/Linux untuk penggunaan manual;
+- Python 3.10+;
+- PowerShell untuk automation Windows;
+- Google Service Account;
+- credential API BSrE yang valid.
 
-Dependency:
+## Python Dependency
 
 ```text
 gspread
@@ -152,68 +237,163 @@ google-auth
 google-api-python-client
 ```
 
----
+Install:
 
-# Instalasi Windows
+```bash
+pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
+```
 
-```powershell
-git clone https://github.com/ajung5/BSRE-Automation.git C:\BSRE-Automation
-cd C:\BSRE-Automation
+Atau agar dependency dipasang ke interpreter Python yang benar:
 
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
+```bash
 python -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
 ```
 
----
-
-# Instalasi macOS
+Pada macOS biasanya:
 
 ```bash
-git clone https://github.com/ajung5/BSRE-Automation.git
-cd BSRE-Automation
-
-python3 -m venv venv
-source venv/bin/activate
-
 python3 -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
 ```
 
 ---
 
-# Konfigurasi `.env`
+# Instalasi
+
+## Windows
+
+Clone repository:
+
+```powershell
+git clone https://github.com/ajung5/BSRE-Automation.git C:\BSRE-Automation
+cd C:\BSRE-Automation
+```
+
+Buat virtual environment:
+
+```powershell
+python -m venv venv
+```
+
+Aktifkan:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+```
+
+Install dependency:
+
+```powershell
+python -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
+```
+
+## macOS
+
+Clone repository:
+
+```bash
+git clone https://github.com/ajung5/BSRE-Automation.git
+cd BSRE-Automation
+```
+
+Buat virtual environment:
+
+```bash
+python3 -m venv venv
+```
+
+Aktifkan:
+
+```bash
+source venv/bin/activate
+```
+
+Install dependency:
+
+```bash
+python3 -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
+```
+
+---
+
+# Konfigurasi
+
+Buat file `.env` pada root repository.
+
+Contoh:
 
 ```env
+# ==========================================
+# BSRE API
+# ==========================================
+
 BSRE_BASE_URL=https://example-bsre-api
 BSRE_USERNAME=your_username
 BSRE_PASSWORD=your_password
 
+
+# ==========================================
+# GOOGLE SHEETS
+# ==========================================
+
 GOOGLE_CREDENTIALS=google_credentials.json
+
 SPREADSHEET_ID=your_google_spreadsheet_id
+
 WORKSHEET_NAME=Nama Worksheet
 ```
 
-> Jangan commit `.env` atau credential Google Service Account ke repository.
+> Jangan commit `.env` karena berisi credential dan konfigurasi sensitif.
+
+---
+
+# Google Service Account
+
+Simpan credential Google Service Account sebagai:
+
+```text
+google_credentials.json
+```
+
+pada root repository.
+
+Pastikan nilai:
+
+```env
+GOOGLE_CREDENTIALS=google_credentials.json
+```
+
+sesuai dengan nama/path credential.
+
+Cari `client_email` pada file credential:
+
+```json
+"client_email": "service-account-name@project-id.iam.gserviceaccount.com"
+```
+
+Share Google Spreadsheet ke alamat tersebut dan berikan permission:
+
+```text
+Editor
+```
 
 ---
 
 # Menjalankan Script Manual
 
-## Windows — Filtered
+## Windows — Filtered / Visible Rows
 
 ```powershell
 cd C:\BSRE-Automation
 python .\cek_nik_bsre_spreadseheet_merge.py
 ```
 
-Dengan venv:
+Dengan interpreter dari virtual environment tanpa aktivasi:
 
 ```powershell
 .\venv\Scripts\python.exe .\cek_nik_bsre_spreadseheet_merge.py
 ```
 
-## Windows — All Rows
+## Windows — Semua Row
 
 ```powershell
 python .\cek_nik_bsre_spreadseheet_merge_all_rows.py
@@ -225,21 +405,34 @@ atau:
 .\venv\Scripts\python.exe .\cek_nik_bsre_spreadseheet_merge_all_rows.py
 ```
 
-## macOS — Filtered
+## macOS — Filtered / Visible Rows
 
 ```bash
+cd BSRE-Automation
 python3 cek_nik_bsre_spreadseheet_merge.py
 ```
 
-## macOS — All Rows
+Dengan virtual environment:
+
+```bash
+./venv/bin/python cek_nik_bsre_spreadseheet_merge.py
+```
+
+## macOS — Semua Row
 
 ```bash
 python3 cek_nik_bsre_spreadseheet_merge_all_rows.py
 ```
 
+atau:
+
+```bash
+./venv/bin/python cek_nik_bsre_spreadseheet_merge_all_rows.py
+```
+
 ---
 
-# PowerShell Wrapper
+# Menjalankan dengan PowerShell Wrapper
 
 Repository menyediakan:
 
@@ -247,10 +440,16 @@ Repository menyediakan:
 run_bsre.ps1
 ```
 
-Wrapper menjalankan:
+Wrapper digunakan untuk automation Windows dan saat ini menjalankan:
 
 ```text
 cek_nik_bsre_spreadseheet_merge_all_rows.py
+```
+
+Directory default:
+
+```powershell
+$BaseDir = "C:\BSRE-Automation"
 ```
 
 Contoh:
@@ -259,22 +458,41 @@ Contoh:
 powershell.exe -ExecutionPolicy Bypass -File "C:\BSRE-Automation\run_bsre.ps1"
 ```
 
-Wrapper:
+Wrapper akan:
 
-1. memakai Python dari virtual environment;
-2. memastikan folder `logs` tersedia;
-3. membuat file log setiap eksekusi;
-4. menjalankan script all-rows;
-5. menangkap `stdout` dan `stderr`;
-6. mencatat status proses;
-7. mencatat waktu selesai dan durasi;
-8. mengembalikan exit code ke Task Scheduler.
+1. menentukan lokasi project;
+2. menggunakan Python dari virtual environment;
+3. memastikan directory `logs` tersedia;
+4. membuat file log setiap eksekusi;
+5. menjalankan script all-rows;
+6. menangkap `stdout` dan `stderr`;
+7. mencatat status proses;
+8. mencatat waktu selesai dan durasi;
+9. mengembalikan exit code ke Windows.
 
 ---
 
 # Logging
 
-Contoh footer log:
+Log automation PowerShell disimpan di:
+
+```text
+C:\BSRE-Automation\logs\
+```
+
+Format filename:
+
+```text
+bsre_DD-Bbb-YYYY_HH-mm-ss.log
+```
+
+Contoh:
+
+```text
+bsre_11-Sep-2026_18-00-01.log
+```
+
+Contoh footer:
 
 ```text
 End Time   : 11-Sep-2026_18:42:12
@@ -283,43 +501,81 @@ BSRE Sync SUCCESS : 2026-09-11 18:42:12
 ============================================================
 ```
 
+Jika proses gagal:
+
+```text
+BSRE Sync FAILED - Exit Code: 1 : 2026-09-11 18:10:22
+============================================================
+```
+
 ---
 
 # Unit Testing
 
-Repository menyediakan:
-
-```text
-tests/test_both_bsre_modes.py
-```
-
-Test tersebut menguji kedua script:
+Repository menyediakan unit test untuk memastikan logic utama pada **kedua mode operasi** tetap bekerja setelah source code diubah:
 
 ```text
 cek_nik_bsre_spreadseheet_merge.py
 cek_nik_bsre_spreadseheet_merge_all_rows.py
 ```
 
-Unit test menggunakan `unittest` dan `unittest.mock`, sehingga:
+Unit test saat ini berada pada:
 
-- tidak membutuhkan `pytest`;
+```text
+tests/test_both_bsre_modes.py
+```
+
+Test menggunakan module bawaan Python:
+
+```text
+unittest
+unittest.mock
+```
+
+sehingga **tidak membutuhkan `pytest`**.
+
+Unit test dirancang agar aman dijalankan pada komputer lokal maupun VPS karena menggunakan **mock/fake object**. Selama unit test berjalan:
+
 - tidak melakukan request nyata ke API BSrE;
-- tidak mengubah Google Sheets produksi;
-- tidak melakukan write ke spreadsheet asli;
-- tidak memerlukan credential produksi untuk melakukan request;
-- menggunakan fake worksheet, fake response, dan mock API.
+- tidak mengubah Google Sheets asli;
+- tidak melakukan write ke spreadsheet produksi;
+- response API digantikan dengan `FakeResponse`;
+- worksheet Google Sheets digantikan dengan `FakeWorksheet`;
+- Google Sheets service metadata digantikan dengan fake service;
+- delay `time.sleep()` dimock agar test berjalan cepat;
+- progress `tqdm` dimock agar tidak mengganggu output test.
 
-Dependency aplikasi tetap harus terpasang karena kedua module utama tetap di-import saat test dijalankan.
+Walaupun koneksi eksternal dimock, dependency aplikasi tetap harus ter-install karena kedua file Python utama tetap di-import saat test dijalankan.
 
 ---
 
-## Cakupan Unit Test
+## File Unit Test
 
-`tests/test_both_bsre_modes.py` memiliki **15 test method**.
+Struktur unit test saat ini:
 
-### Normalisasi tanggal
+```text
+BSRE-Automation/
+├── cek_nik_bsre_spreadseheet_merge.py
+├── cek_nik_bsre_spreadseheet_merge_all_rows.py
+└── tests/
+    └── test_both_bsre_modes.py
+```
 
-Memastikan format:
+File:
+
+```text
+tests/test_both_bsre_modes.py
+```
+
+menguji kedua script sekaligus dan saat ini berisi **15 test method**.
+
+---
+
+## Apa yang Diuji
+
+### 1. Normalisasi Tanggal pada Kedua Script
+
+Test memastikan berbagai format tanggal berikut:
 
 ```text
 2026-08-12
@@ -337,32 +593,91 @@ dinormalisasi menjadi:
 2026-08-12
 ```
 
-### Differential comparison
+Tujuannya agar perbedaan format tampilan tidak dianggap sebagai perubahan data.
 
-Memastikan:
+---
+
+### 2. Perbandingan Tanggal
+
+Contoh:
 
 ```text
-12-Agu-2026
-2026-08-12
+Lama : 12-Agu-2026
+Baru : 2026-08-12
 ```
 
-dianggap tanggal yang sama.
+Expected:
 
-Dan:
+```text
+Tidak berubah
+```
+
+Sedangkan:
+
+```text
+Lama : 12-Agu-2026
+Baru : 2027-08-12
+```
+
+Expected:
+
+```text
+Berubah
+```
+
+---
+
+### 3. Perbandingan Nilai Teks
+
+Test memastikan spasi di awal atau akhir tidak menyebabkan false-positive.
+
+Contoh:
+
+```text
+" Verified "
+"Verified"
+```
+
+Expected:
+
+```text
+Tidak berubah
+```
+
+Sedangkan:
 
 ```text
 Issued
 Expired
 ```
 
-dianggap berbeda.
+Expected:
 
-### Mapping ISSUE
+```text
+Berubah
+```
 
-Mock:
+---
+
+### 4. Helper Pengambilan Nilai Cell
+
+Test memastikan fungsi pengambilan nilai cell:
+
+- mengembalikan nilai pada index yang valid;
+- mengembalikan string kosong jika index berada di luar panjang row.
+
+Ini mencegah error ketika suatu row memiliki jumlah kolom yang tidak lengkap.
+
+---
+
+### 5. Mapping Status `ISSUE`
+
+Mock API:
 
 ```json
-{"status": "ISSUE"}
+{
+  "status": "ISSUE"
+}
 ```
 
 Expected:
@@ -374,7 +689,19 @@ status_pengguna    = Verified
 status_sertifikat  = Issued
 ```
 
-### NOT_REGISTERED
+Test dijalankan terhadap **kedua script**.
+
+---
+
+### 6. Status `NOT_REGISTERED`
+
+Mock API:
+
+```json
+{
+  "status": "NOT_REGISTERED"
+}
+```
 
 Expected:
 
@@ -382,11 +709,20 @@ Expected:
 update = False
 ```
 
-Artinya kolom O/P tidak ditimpa.
+serta:
 
-### Pemilihan sertifikat terbaru
+```text
+status_pengguna   = None
+status_sertifikat = None
+```
 
-Jika profile mock memiliki:
+Artinya status lama pada kolom O/P tidak dihapus atau ditimpa.
+
+---
+
+### 7. Pemilihan Sertifikat Terbaru
+
+Jika API profile mengembalikan:
 
 ```text
 12-08-2026
@@ -400,93 +736,224 @@ script harus memilih:
 12-08-2028
 ```
 
-### NO_CERTIFICATE
+sebagai tanggal berakhir terbaru.
 
-Memastikan profile tanpa sertifikat menghasilkan:
+Tanggal terbit kemudian dihitung menjadi:
 
 ```text
-status = NO_CERTIFICATE
+2026-08-12
 ```
 
-### HTTP 404
+berdasarkan logic:
 
-Memastikan HTTP 404 dipetakan menjadi:
+```text
+Tanggal Terbit = Tanggal Berakhir - 2 Tahun
+```
+
+---
+
+### 8. Profile Tanpa Sertifikat
+
+Jika API mengembalikan daftar sertifikat kosong:
+
+```json
+{
+  "success": true,
+  "data": {
+    "sertifikat": []
+  }
+}
+```
+
+Expected:
+
+```text
+status           = NO_CERTIFICATE
+tanggal_terbit   = ""
+tanggal_berakhir = ""
+```
+
+---
+
+### 9. Profile HTTP `404`
+
+Jika endpoint profile mengembalikan HTTP:
+
+```text
+404
+```
+
+Expected:
 
 ```text
 status = NOT_FOUND
 ```
 
-### Filtered Mode
+---
 
-Memastikan row:
+### 10. Deteksi Row Visible pada Filtered Mode
 
-```text
-hiddenByFilter = true
-```
-
-atau:
+Test memvalidasi metadata:
 
 ```text
-hiddenByUser = true
+hiddenByFilter
+hiddenByUser
 ```
 
-tidak diproses oleh script filtered.
-
-### All Rows Mode
-
-Memastikan script all-rows tetap memproses seluruh row.
-
-### Differential Cell Update
-
-Jika hanya:
+Contoh:
 
 ```text
-P3 = Issued -> Expired
+Row 1 = header
+Row 2 = visible
+Row 3 = hiddenByFilter
+Row 4 = hiddenByUser
+Row 5 = visible
 ```
 
-yang berubah, expected batch update hanya:
+Expected row yang dianggap terlihat:
+
+```text
+1, 2, 5
+```
+
+Row yang hidden tidak ikut diproses.
+
+---
+
+### 11. Filtered Mode Hanya Memanggil API untuk Row Visible
+
+Test membuat data:
+
+```text
+Row 2 = visible
+Row 3 = hiddenByFilter
+```
+
+Expected:
+
+```text
+API status  -> hanya dipanggil untuk Row 2
+API profile -> hanya dipanggil untuk Row 2
+```
+
+Dengan demikian perubahan pada logic filter dapat terdeteksi sebelum script dipakai ke spreadsheet produksi.
+
+---
+
+### 12. All-Rows Mode Memproses Seluruh Row
+
+Untuk script:
+
+```text
+cek_nik_bsre_spreadseheet_merge_all_rows.py
+```
+
+jika terdapat:
+
+```text
+Row 2
+Row 3
+```
+
+Expected:
+
+```text
+API status  -> dipanggil untuk Row 2 dan Row 3
+API profile -> dipanggil untuk Row 2 dan Row 3
+```
+
+Mode ini tidak bergantung pada metadata filter Google Sheets.
+
+---
+
+### 13. Differential Update Hanya Menulis Cell yang Berubah
+
+Contoh:
+
+```text
+Row 3 sebelum:
+O = Verified
+P = Issued
+Q = 2024-08-12
+R = 2026-08-12
+
+Hasil API:
+O = Verified
+P = Expired
+Q = 2024-08-12
+R = 2026-08-12
+```
+
+Expected batch update:
 
 ```text
 P3 = Expired
 ```
 
-bukan seluruh O3:R3.
+Bukan:
+
+```text
+O3
+P3
+Q3
+R3
+```
+
+Test juga memastikan format tanggal tidak diubah jika Q/R memang tidak mengalami perubahan.
 
 ---
 
 # Menjalankan Unit Test di Windows
 
-**Jalankan dari root repository:**
+Jalankan command dari **root repository**, bukan dari dalam folder `tests`.
+
+Contoh:
 
 ```powershell
 cd C:\BSRE-Automation
 ```
 
-Dengan virtual environment:
+## Dengan Virtual Environment
+
+Direkomendasikan jika repository menggunakan `venv`:
 
 ```powershell
 .\venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Dengan Python global:
+## Dengan Python Global
+
+Jika dependency sudah ter-install secara global:
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Menjalankan hanya file test saat ini:
+Command tersebut akan mencari file:
 
-```powershell
-python -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
+```text
+tests/test_*.py
 ```
 
-Dengan venv:
+dan menjalankan seluruh test yang ditemukan.
+
+---
+
+## Menjalankan Hanya `test_both_bsre_modes.py` di Windows
+
+Dengan virtual environment:
 
 ```powershell
 .\venv\Scripts\python.exe -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
 ```
 
-> Direkomendasikan menggunakan `unittest discover`, bukan menjalankan file test dari dalam folder `tests`, agar module utama di root repository dapat di-import dengan benar.
+Dengan Python global:
+
+```powershell
+python -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
+```
+
+Penggunaan `unittest discover` direkomendasikan agar root repository tetap berada pada Python import path dan kedua module utama dapat ditemukan dengan benar.
 
 ---
 
@@ -498,19 +965,41 @@ Masuk ke root repository:
 cd /path/ke/BSRE-Automation
 ```
 
-Dengan virtual environment:
+## Dengan Virtual Environment
 
 ```bash
 ./venv/bin/python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Dengan Python global:
+Jika virtual environment sudah diaktifkan dengan:
+
+```bash
+source venv/bin/activate
+```
+
+cukup jalankan:
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+## Dengan Python Global
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-Menjalankan hanya file test saat ini:
+---
+
+## Menjalankan Hanya `test_both_bsre_modes.py` di macOS
+
+Dengan virtual environment:
+
+```bash
+./venv/bin/python -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
+```
+
+Dengan Python global:
 
 ```bash
 python3 -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
@@ -518,9 +1007,9 @@ python3 -m unittest discover -s tests -p "test_both_bsre_modes.py" -v
 
 ---
 
-# Hasil Unit Test
+# Membaca Hasil Unit Test
 
-Jika seluruh test berhasil:
+Jika seluruh test berhasil, output akhir akan seperti:
 
 ```text
 ----------------------------------------------------------------------
@@ -529,34 +1018,50 @@ Ran 15 tests in X.XXXs
 OK
 ```
 
+Beberapa test akan tampil seperti:
+
+```text
+test_normalisasi_tanggal_pada_kedua_script ... ok
+test_issue ... ok
+test_not_registered_tidak_update ... ok
+test_ambil_row_terlihat_melewati_hidden ... ok
+test_proses_filtered_hanya_memanggil_api_untuk_row_visible ... ok
+test_proses_all_rows_memanggil_api_untuk_semua_row ... ok
+test_all_rows_hanya_update_cell_yang_berubah ... ok
+```
+
+Arti status:
+
 | Status | Arti |
 |---|---|
 | `ok` | Test berhasil |
-| `FAIL` | Hasil aktual berbeda dari expected |
-| `ERROR` | Terjadi exception, error import, atau dependency |
+| `FAIL` | Test berjalan, tetapi hasil aktual berbeda dari expected |
+| `ERROR` | Test gagal dieksekusi karena exception, dependency, atau masalah import |
 
 ---
 
-# Workflow yang Direkomendasikan
+# Workflow Testing yang Direkomendasikan
+
+Sebelum menjalankan script setelah melakukan perubahan source code:
 
 ```text
 Edit source
     |
     v
-Unit Test
+Jalankan Unit Test
     |
-    +-- FAIL / ERROR --> Perbaiki
+    +-- FAIL / ERROR --> Perbaiki source atau test
     |
     `-- OK
          |
          v
-Test manual
+   Jalankan script manual
          |
          v
-Verifikasi Google Sheets
+   Verifikasi hasil
          |
          v
-Deploy / Task Scheduler
+   Deploy / Task Scheduler
 ```
 
 Windows:
@@ -579,7 +1084,7 @@ git pull
 
 ## `ModuleNotFoundError: No module named 'cek_nik_bsre_spreadseheet_merge'`
 
-Pastikan test dijalankan dari root repository.
+Pastikan terminal berada pada **root repository**.
 
 Windows:
 
@@ -590,32 +1095,72 @@ C:\BSRE-Automation>
 macOS:
 
 ```text
-.../BSRE-Automation/
+/path/ke/BSRE-Automation/
 ```
 
-Gunakan `unittest discover`:
+Kemudian gunakan:
 
 ```powershell
 python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-atau:
+atau pada macOS:
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
 
+Jangan menjalankan test setelah berpindah working directory ke:
+
+```text
+BSRE-Automation/tests/
+```
+
+karena module utama berada pada root repository.
+
+---
+
+## `ModuleNotFoundError: No module named 'cek_nik_bsre_spreadseheet_merge_all_rows'`
+
+Penyebabnya sama: Python tidak menemukan module all-rows pada root repository.
+
+Pastikan command dijalankan dari:
+
+```text
+BSRE-Automation/
+```
+
+dan bukan dari:
+
+```text
+BSRE-Automation/tests/
+```
+
+---
+
 ## `ModuleNotFoundError: No module named 'gspread'`
 
-Install dependency dengan interpreter yang digunakan untuk test.
+Dependency aplikasi belum tersedia pada interpreter Python yang digunakan untuk menjalankan test.
 
-Windows:
+Windows dengan venv:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
+```
+
+Windows global:
 
 ```powershell
 python -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
 ```
 
-macOS:
+macOS dengan venv:
+
+```bash
+./venv/bin/python -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
+```
+
+macOS global:
 
 ```bash
 python3 -m pip install gspread requests python-dateutil python-dotenv tqdm google-auth google-api-python-client
@@ -623,40 +1168,265 @@ python3 -m pip install gspread requests python-dateutil python-dotenv tqdm googl
 
 ---
 
+## Apakah Unit Test Memerlukan `.env` dan `google_credentials.json`?
+
+Untuk unit test saat ini, credential produksi **tidak digunakan untuk koneksi nyata**.
+
+Test mengganti nilai konfigurasi serta koneksi eksternal menggunakan mock/fake object.
+
+Artinya unit test tidak akan:
+
+```text
+mengakses Google Sheets produksi
+mengubah data produksi
+mengirim request nyata ke API BSrE
+```
+
+Namun kedua script utama tetap menjalankan:
+
+```python
+load_dotenv()
+```
+
+saat module di-import.
+
+Unit test ini bertujuan menguji **logic aplikasi**, bukan menguji validitas credential atau konektivitas ke environment produksi.
+
+---
+
+# Row yang Diproses
+
+## Filtered Mode
+
+Script:
+
+```text
+cek_nik_bsre_spreadseheet_merge.py
+```
+
+membaca:
+
+```text
+hiddenByFilter
+hiddenByUser
+```
+
+Row dilewati jika salah satunya bernilai `true`.
+
+Contoh:
+
+```text
+1000 row total
+↓
+Filter OPD tertentu
+↓
+120 row terlihat
+↓
+Hanya 120 row diperiksa ke API BSrE
+```
+
+## All-Rows Mode
+
+Script:
+
+```text
+cek_nik_bsre_spreadseheet_merge_all_rows.py
+```
+
+memproses seluruh row data tanpa memperhatikan filter/hidden state.
+
+---
+
+# Proses API BSrE
+
+Untuk setiap NIK yang diproses, script melakukan dua request utama.
+
+## Status Sertifikat
+
+```http
+GET /api/user/status/{nik}
+```
+
+Digunakan untuk menentukan:
+
+```text
+Status Pengguna
+Status Sertifikat
+```
+
+## Profile Sertifikat
+
+```http
+GET /api/user/profile/{nik}
+```
+
+Jika terdapat beberapa sertifikat, script memilih `berlaku_sampai` paling baru.
+
+---
+
+# Perhitungan Tanggal Sertifikat
+
+```text
+Tanggal Terbit = Tanggal Berakhir - 2 Tahun
+```
+
+Contoh:
+
+```text
+Tanggal berakhir : 12-08-2028
+Tanggal terbit   : 12-08-2026
+```
+
+> Mekanisme ini menggunakan asumsi masa berlaku sertifikat dua tahun. Jika API BSrE menyediakan tanggal penerbitan eksplisit atau kebijakan berubah, logic perlu disesuaikan.
+
+---
+
+# Statistik Eksekusi
+
+Contoh statistik:
+
+```text
+======================================================================
+ HASIL PENGECEKAN
+======================================================================
+
+Total row data            : 18399
+Total row diproses        : 18399
+Total row berubah         : 124
+Total row tanpa perubahan : 18275
+Total cell berubah        : 167
+
+--- PERUBAHAN CELL ---
+Status Pengguna (O)       : 25
+Status Sertifikat (P)     : 87
+Tanggal terbit (Q)        : 21
+Tanggal berakhir (R)      : 34
+
+--- STATISTIK STATUS ---
+ISSUE                     : 7397
+EXPIRED                   : 66
+REVOKE                    : 8
+RENEW                     : 10
+NO_CERTIFICATE            : 164
+NOT_REGISTERED            : 10748
+Tidak diubah              : 6
+```
+
+---
+
+# Troubleshooting Operasional
+
+## `google_credentials.json tidak ditemukan`
+
+Pastikan file tersedia pada root repository atau path di `.env` benar.
+
+```env
+GOOGLE_CREDENTIALS=google_credentials.json
+```
+
+## `SPREADSHEET_ID belum diisi`
+
+```env
+SPREADSHEET_ID=xxxxxxxxxxxxxxxx
+```
+
+## Error 403 Google Sheets
+
+Pastikan Service Account sudah di-share ke spreadsheet dengan permission **Editor**.
+
+## Error 401 BSrE
+
+Periksa:
+
+```env
+BSRE_USERNAME=
+BSRE_PASSWORD=
+```
+
+## Header `NIK` Tidak Ditemukan
+
+Worksheet harus memiliki header:
+
+```text
+NIK
+```
+
+---
+
 # Keamanan
 
-Jangan commit:
+File berikut tidak boleh disimpan ke repository:
 
 ```text
 .env
 google_credentials.json
 *.env
 *credentials*.json
+```
+
+Log juga sebaiknya diabaikan:
+
+```gitignore
+logs/
 *.log
 ```
 
-Rekomendasi `.gitignore`:
+Rekomendasi:
 
 ```gitignore
+# Environment / Secrets
 .env
 *.env
+
+# Google Service Account
 google_credentials.json
 *credentials*.json
 
+# Logs
 logs/
 *.log
 
+# Python Virtual Environment
 venv/
 .venv/
 
+# Python Cache
 __pycache__/
 *.py[cod]
 
+# VS Code
 .vscode/
 
+# OS Files
 Thumbs.db
 .DS_Store
 ```
+
+Jika credential pernah masuk Git history:
+
+1. rotate/revoke credential;
+2. buat credential baru;
+3. hapus secret dari Git history jika diperlukan;
+4. pastikan file sudah masuk `.gitignore`.
+
+---
+
+# Penggunaan
+
+Project ini ditujukan untuk otomatisasi administrasi dan sinkronisasi informasi sertifikat elektronik BSrE pada lingkungan yang memiliki otorisasi resmi untuk:
+
+- mengakses API BSrE;
+- membaca NIK pengguna;
+- mengakses Google Spreadsheet terkait;
+- memperbarui status sertifikat elektronik.
+
+Gunakan credential berdasarkan prinsip:
+
+```text
+Least Privilege
+```
+
+dan hindari menyimpan username, password, token, maupun Service Account credential langsung di source code.
 
 ---
 
@@ -664,4 +1434,8 @@ Thumbs.db
 
 **ajung5**
 
-GitHub: `https://github.com/ajung5`
+GitHub:
+
+```text
+https://github.com/ajung5
+```
