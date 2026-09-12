@@ -58,6 +58,15 @@ REQUEST_DELAY = 0.1
 
 
 # ============================================================
+# HEARTBEAT / PROGRESS LOG
+# ============================================================
+
+# Menulis progress ke log setiap 500 row.
+# Tidak menampilkan detail setiap NIK agar file log tetap ringkas.
+HEARTBEAT_INTERVAL = 500
+
+
+# ============================================================
 # MAPPING BULAN UNTUK NORMALISASI TANGGAL
 # ============================================================
 
@@ -120,7 +129,6 @@ def ambil_nilai_cell(row, index):
         return str(row[index]).strip()
 
     return ""
-
 
 
 def normalisasi_tanggal(value):
@@ -200,7 +208,6 @@ def normalisasi_tanggal(value):
     return value
 
 
-
 def nilai_teks_berubah(nilai_lama, nilai_baru):
     """
     Membandingkan nilai teks setelah trim.
@@ -211,7 +218,6 @@ def nilai_teks_berubah(nilai_lama, nilai_baru):
     baru = "" if nilai_baru is None else str(nilai_baru).strip()
 
     return lama != baru
-
 
 
 def nilai_tanggal_berubah(nilai_lama, nilai_baru):
@@ -507,7 +513,8 @@ def proses_google_sheet():
     print(f"\nTotal row data       : {total_row}")
     print(f"Total row diproses   : {len(semua_row_data)}")
     print("Mode                 : SEMUA ROW")
-    print("Update               : HANYA CELL O/P/Q/R YANG BERUBAH\n")
+    print("Update               : HANYA CELL O/P/Q/R YANG BERUBAH")
+    print(f"Heartbeat            : SETIAP {HEARTBEAT_INTERVAL} ROW\n")
 
     # Semua cell yang benar-benar berubah akan dikumpulkan di sini
     # lalu ditulis sekaligus menggunakan batch update.
@@ -551,22 +558,118 @@ def proses_google_sheet():
     jumlah_error = 0
 
     # ========================================================
+    # HEARTBEAT / PROGRESS MONITORING
+    # ========================================================
+
+    waktu_mulai_proses = time.monotonic()
+    total_diproses = len(semua_row_data)
+
+    def format_durasi(total_detik):
+        """
+        Mengubah detik menjadi format HH:MM:SS.
+        """
+        total_detik = max(0, int(total_detik))
+
+        jam, sisa = divmod(total_detik, 3600)
+        menit, detik = divmod(sisa, 60)
+
+        return f"{jam:02d}:{menit:02d}:{detik:02d}"
+
+    def cetak_heartbeat(jumlah_selesai):
+        """
+        Menulis heartbeat ke stdout/log.
+
+        Contoh:
+        Progress : 500 / 18405 (2.72%) |
+                   Elapsed: 00:04:12 |
+                   ETA: 02:30:11
+        """
+        if jumlah_selesai <= 0:
+            return
+
+        if total_diproses <= 0:
+            return
+
+        elapsed = time.monotonic() - waktu_mulai_proses
+
+        progress = (
+            jumlah_selesai
+            / total_diproses
+        ) * 100
+
+        rata_rata_per_row = (
+            elapsed
+            / jumlah_selesai
+        )
+
+        sisa_row = (
+            total_diproses
+            - jumlah_selesai
+        )
+
+        estimasi_sisa = (
+            rata_rata_per_row
+            * sisa_row
+        )
+
+        print(
+            f"Progress : "
+            f"{jumlah_selesai} / {total_diproses} "
+            f"({progress:.2f}%) | "
+            f"Elapsed: {format_durasi(elapsed)} | "
+            f"ETA: {format_durasi(estimasi_sisa)}",
+            flush=True,
+        )
+
+    # ========================================================
     # LOOP SELURUH ROW
     # ========================================================
 
-    for nomor_baris in tqdm(
-        semua_row_data,
-        total=len(semua_row_data),
-        desc="Checking NIK",
-        disable=not sys.stdout.isatty(),
+    for index_proses, nomor_baris in enumerate(
+        tqdm(
+            semua_row_data,
+            total=len(semua_row_data),
+            desc="Checking NIK",
+            disable=not sys.stdout.isatty(),
+        ),
+        start=1,
     ):
+
+        # ====================================================
+        # HEARTBEAT
+        # ====================================================
+        #
+        # Heartbeat dilakukan pada awal iterasi berikutnya.
+        #
+        # Contoh:
+        # - Saat masuk row ke-501 berarti 500 row sebelumnya
+        #   sudah selesai diperiksa.
+        #
+        # Model ini juga tetap bekerja jika row sebelumnya
+        # terkena "continue", misalnya:
+        # - NIK kosong
+        # - error API
+        # ====================================================
+
+        jumlah_selesai_sebelumnya = index_proses - 1
+
+        if (
+            jumlah_selesai_sebelumnya > 0
+            and jumlah_selesai_sebelumnya % HEARTBEAT_INTERVAL == 0
+        ):
+            cetak_heartbeat(
+                jumlah_selesai_sebelumnya
+            )
+
         if nomor_baris > len(data):
             continue
 
         row = data[nomor_baris - 1]
 
         if len(row) >= kolom_nik_index:
-            nik = str(row[kolom_nik_index - 1]).strip()
+            nik = str(
+                row[kolom_nik_index - 1]
+            ).strip()
         else:
             nik = ""
 
@@ -597,18 +700,38 @@ def proses_google_sheet():
         # Q = index 16
         # R = index 17
 
-        status_pengguna_lama = ambil_nilai_cell(row, 14)
-        status_sertifikat_lama = ambil_nilai_cell(row, 15)
-        tanggal_terbit_lama = ambil_nilai_cell(row, 16)
-        tanggal_berakhir_lama = ambil_nilai_cell(row, 17)
+        status_pengguna_lama = ambil_nilai_cell(
+            row,
+            14,
+        )
+
+        status_sertifikat_lama = ambil_nilai_cell(
+            row,
+            15,
+        )
+
+        tanggal_terbit_lama = ambil_nilai_cell(
+            row,
+            16,
+        )
+
+        tanggal_berakhir_lama = ambil_nilai_cell(
+            row,
+            17,
+        )
 
         # ====================================================
         # UPDATE STATUS - KOLOM O & P
         # ====================================================
 
         if hasil_status["update"]:
-            status_pengguna_baru = hasil_status["status_pengguna"]
-            status_sertifikat_baru = hasil_status["status_sertifikat"]
+            status_pengguna_baru = hasil_status[
+                "status_pengguna"
+            ]
+
+            status_sertifikat_baru = hasil_status[
+                "status_sertifikat"
+            ]
 
             # Update O hanya jika benar-benar berubah.
             if nilai_teks_berubah(
@@ -618,7 +741,11 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"O{nomor_baris}",
-                        "values": [[status_pengguna_baru]],
+                        "values": [
+                            [
+                                status_pengguna_baru
+                            ]
+                        ],
                     }
                 )
 
@@ -633,7 +760,11 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"P{nomor_baris}",
-                        "values": [[status_sertifikat_baru]],
+                        "values": [
+                            [
+                                status_sertifikat_baru
+                            ]
+                        ],
                     }
                 )
 
@@ -644,18 +775,25 @@ def proses_google_sheet():
 
             if status_api == "ISSUE":
                 jumlah_issue += 1
+
             elif status_api == "REVOKE":
                 jumlah_revoke += 1
+
             elif status_api == "RENEW":
                 jumlah_renew += 1
+
             elif status_api == "NO_CERTIFICATE":
                 jumlah_no_certificate += 1
+
             elif status_api == "EXPIRED":
                 jumlah_expired += 1
 
         else:
-            if hasil_status.get("status_api") == "NOT_REGISTERED":
+            if hasil_status.get(
+                "status_api"
+            ) == "NOT_REGISTERED":
                 jumlah_not_registered += 1
+
             else:
                 jumlah_tidak_diubah += 1
 
@@ -663,14 +801,23 @@ def proses_google_sheet():
         # PROFILE TANGGAL - KOLOM Q & R
         # ====================================================
 
-        status_prof = hasil_profile.get("status", "")
+        status_prof = hasil_profile.get(
+            "status",
+            "",
+        )
 
         tanggal_terbit_baru = None
         tanggal_berakhir_baru = None
 
         if status_prof == "SUCCESS":
-            tanggal_terbit_baru = hasil_profile["tanggal_terbit"]
-            tanggal_berakhir_baru = hasil_profile["tanggal_berakhir"]
+            tanggal_terbit_baru = hasil_profile[
+                "tanggal_terbit"
+            ]
+
+            tanggal_berakhir_baru = hasil_profile[
+                "tanggal_berakhir"
+            ]
+
             jumlah_sukses += 1
 
         elif status_prof == "NO_CERTIFICATE":
@@ -701,7 +848,11 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"Q{nomor_baris}",
-                        "values": [[tanggal_terbit_baru]],
+                        "values": [
+                            [
+                                tanggal_terbit_baru
+                            ]
+                        ],
                     }
                 )
 
@@ -720,7 +871,11 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"R{nomor_baris}",
-                        "values": [[tanggal_berakhir_baru]],
+                        "values": [
+                            [
+                                tanggal_berakhir_baru
+                            ]
+                        ],
                     }
                 )
 
@@ -732,17 +887,35 @@ def proses_google_sheet():
         # ====================================================
 
         if row_updated_in_this_iter:
-            row_yang_diubah.add(nomor_baris)
+            row_yang_diubah.add(
+                nomor_baris
+            )
         else:
             jumlah_row_tanpa_perubahan += 1
 
         time.sleep(REQUEST_DELAY)
 
     # ========================================================
+    # HEARTBEAT TERAKHIR
+    # ========================================================
+    #
+    # Selalu menampilkan 100% setelah seluruh row selesai.
+    # Ini juga menangani jumlah row yang bukan kelipatan 500,
+    # misalnya 18.405 row.
+    # ========================================================
+
+    if total_diproses > 0:
+        cetak_heartbeat(
+            total_diproses
+        )
+
+    # ========================================================
     # UPDATE GOOGLE SHEETS BATCH
     # ========================================================
 
-    print("\nMengupdate Google Spreadsheet...\n")
+    print(
+        "\nMengupdate Google Spreadsheet...\n"
+    )
 
     if update_cells:
         worksheet.batch_update(
@@ -762,8 +935,11 @@ def proses_google_sheet():
                         }
                     },
                 )
+
             except Exception as e:
-                print(f"Peringatan format tanggal: {e}")
+                print(
+                    f"Peringatan format tanggal: {e}"
+                )
 
         print(
             f"Berhasil mengupdate {len(update_cells)} cell "
@@ -771,7 +947,10 @@ def proses_google_sheet():
         )
 
     else:
-        print("Tidak ada perubahan data. Tidak ada cell O/P/Q/R yang diupdate.")
+        print(
+            "Tidak ada perubahan data. "
+            "Tidak ada cell O/P/Q/R yang diupdate."
+        )
 
     # ========================================================
     # HASIL AKHIR
@@ -788,17 +967,52 @@ def proses_google_sheet():
     print(" HASIL PENGECEKAN")
     print("=" * 70 + "\n")
 
-    print(f"Total row data            : {total_row}")
-    print(f"Total row diproses        : {len(semua_row_data)}")
-    print(f"Total row berubah         : {len(row_yang_diubah)}")
-    print(f"Total row tanpa perubahan : {jumlah_row_tanpa_perubahan}")
-    print(f"Total cell berubah        : {total_cell_berubah}\n")
+    print(
+        f"Total row data            : "
+        f"{total_row}"
+    )
+
+    print(
+        f"Total row diproses        : "
+        f"{len(semua_row_data)}"
+    )
+
+    print(
+        f"Total row berubah         : "
+        f"{len(row_yang_diubah)}"
+    )
+
+    print(
+        f"Total row tanpa perubahan : "
+        f"{jumlah_row_tanpa_perubahan}"
+    )
+
+    print(
+        f"Total cell berubah        : "
+        f"{total_cell_berubah}\n"
+    )
 
     print("--- PERUBAHAN CELL ---")
-    print(f"Status Pengguna (O)       : {perubahan_o}")
-    print(f"Status Sertifikat (P)     : {perubahan_p}")
-    print(f"Tanggal terbit (Q)        : {perubahan_q}")
-    print(f"Tanggal berakhir (R)      : {perubahan_r}\n")
+
+    print(
+        f"Status Pengguna (O)       : "
+        f"{perubahan_o}"
+    )
+
+    print(
+        f"Status Sertifikat (P)     : "
+        f"{perubahan_p}"
+    )
+
+    print(
+        f"Tanggal terbit (Q)        : "
+        f"{perubahan_q}"
+    )
+
+    print(
+        f"Tanggal berakhir (R)      : "
+        f"{perubahan_r}\n"
+    )
 
     print("--- STATISTIK STATUS ---")
     print(f"ISSUE              : {jumlah_issue}")
@@ -810,22 +1024,55 @@ def proses_google_sheet():
     print(f"Tidak diubah       : {jumlah_tidak_diubah}\n")
 
     print("--- STATISTIK PROFILE ---")
-    print(f"Tanggal ditemukan         : {jumlah_sukses}")
-    print(f"Tidak ada sertifikat      : {jumlah_tidak_ada_sertifikat}")
-    print(f"NIK tidak ditemukan       : {jumlah_tidak_ditemukan}")
-    print(f"Tanggal tidak valid       : {jumlah_tanggal_tidak_valid}")
-    print(f"Profile tanpa data        : {jumlah_no_data}\n")
 
-    print(f"NIK kosong                : {jumlah_nik_kosong}")
-    print(f"Error gabungan            : {jumlah_error}\n")
+    print(
+        f"Tanggal ditemukan         : "
+        f"{jumlah_sukses}"
+    )
+
+    print(
+        f"Tidak ada sertifikat      : "
+        f"{jumlah_tidak_ada_sertifikat}"
+    )
+
+    print(
+        f"NIK tidak ditemukan       : "
+        f"{jumlah_tidak_ditemukan}"
+    )
+
+    print(
+        f"Tanggal tidak valid       : "
+        f"{jumlah_tanggal_tidak_valid}"
+    )
+
+    print(
+        f"Profile tanpa data        : "
+        f"{jumlah_no_data}\n"
+    )
+
+    print(
+        f"NIK kosong                : "
+        f"{jumlah_nik_kosong}"
+    )
+
+    print(
+        f"Error gabungan            : "
+        f"{jumlah_error}\n"
+    )
 
     print("Kolom O = Status Pengguna")
     print("Kolom P = Status Sertifikat")
     print("Kolom Q = Tanggal terbit")
     print("Kolom R = Tanggal berakhir\n")
 
-    print("Semua row tetap diperiksa ke API BSrE.")
-    print("Google Sheets hanya diupdate pada cell O/P/Q/R yang berubah.\n")
+    print(
+        "Semua row tetap diperiksa ke API BSrE."
+    )
+
+    print(
+        "Google Sheets hanya diupdate pada "
+        "cell O/P/Q/R yang berubah.\n"
+    )
 
 
 # ============================================================
@@ -837,7 +1084,9 @@ if __name__ == "__main__":
         proses_google_sheet()
 
     except KeyboardInterrupt:
-        print("\nProses dihentikan oleh pengguna.")
+        print(
+            "\nProses dihentikan oleh pengguna."
+        )
 
     except Exception as e:
         print("\n" + "=" * 70)
