@@ -69,7 +69,7 @@ $Status = "ERROR"
 
 try {
 
-    & $Python $Script *>> $LogFile
+    & $Python -u $Script *>> $LogFile
 
     $ExitCode = $LASTEXITCODE
 
