@@ -122,13 +122,13 @@ BSRE-Automation/
 
 Script menggunakan kolom berikut:
 
-| Kolom | Fungsi |
-|---|---|
+| Kolom | Fungsi                    |
+| ----- | ------------------------- |
 | `NIK` | Sumber NIK yang diperiksa |
-| `O` | Status Pengguna |
-| `P` | Status Sertifikat |
-| `Q` | Tanggal terbit |
-| `R` | Tanggal berakhir |
+| `O`   | Status Pengguna           |
+| `P`   | Status Sertifikat         |
+| `Q`   | Tanggal terbit            |
+| `R`   | Tanggal berakhir          |
 
 Script juga memastikan header:
 
@@ -202,14 +202,14 @@ dianggap tanggal yang sama.
 
 ## Mapping Status BSrE
 
-| Status API | Status Pengguna | Status Sertifikat |
-|---|---|---|
-| `ISSUE` | Verified | Issued |
-| `REVOKE` | Verified | Revoke |
-| `RENEW` | Verified | Renew |
-| `NO_CERTIFICATE` | Verified | New |
-| `EXPIRED` | Verified | Expired |
-| `NOT_REGISTERED` | Tidak diubah | Tidak diubah |
+| Status API       | Status Pengguna | Status Sertifikat |
+| ---------------- | --------------- | ----------------- |
+| `ISSUE`          | Verified        | Issued            |
+| `REVOKE`         | Verified        | Revoke            |
+| `RENEW`          | Verified        | Renew             |
+| `NO_CERTIFICATE` | Verified        | New               |
+| `EXPIRED`        | Verified        | Expired           |
+| `NOT_REGISTERED` | Tidak diubah    | Tidak diubah      |
 
 ---
 
@@ -803,13 +803,13 @@ path virtual environment
 
 ## 11. Last Run Result yang Umum
 
-| Result | Arti Umum | Pemeriksaan |
-|---|---|---|
-| `0x0` | Berhasil | Tidak ada tindakan |
-| `0x1` | Script mengembalikan error | Periksa log PowerShell/Python |
-| `0x2` | File atau path tidak ditemukan | Periksa path project, wrapper, dan venv |
-| `0x41301` | Task masih berjalan | Periksa proses PowerShell/Python |
-| `0x41303` | Task belum pernah dijalankan | Jalankan manual dari Task Scheduler |
+| Result    | Arti Umum                      | Pemeriksaan                             |
+| --------- | ------------------------------ | --------------------------------------- |
+| `0x0`     | Berhasil                       | Tidak ada tindakan                      |
+| `0x1`     | Script mengembalikan error     | Periksa log PowerShell/Python           |
+| `0x2`     | File atau path tidak ditemukan | Periksa path project, wrapper, dan venv |
+| `0x41301` | Task masih berjalan            | Periksa proses PowerShell/Python        |
+| `0x41303` | Task belum pernah dijalankan   | Jalankan manual dari Task Scheduler     |
 
 Task Scheduler result tidak selalu menunjukkan root cause aplikasi secara detail.
 
@@ -1513,10 +1513,10 @@ test_all_rows_hanya_update_cell_yang_berubah ... ok
 
 Arti status:
 
-| Status | Arti |
-|---|---|
-| `ok` | Test berhasil |
-| `FAIL` | Test berjalan, tetapi hasil aktual berbeda dari expected |
+| Status  | Arti                                                                    |
+| ------- | ----------------------------------------------------------------------- |
+| `ok`    | Test berhasil                                                           |
+| `FAIL`  | Test berjalan, tetapi hasil aktual berbeda dari expected                |
 | `ERROR` | Test gagal dieksekusi karena exception, dependency, atau masalah import |
 
 ---
@@ -1891,6 +1891,455 @@ Jika credential pernah masuk Git history:
 4. pastikan file sudah masuk `.gitignore`.
 
 ---
+
+---
+
+# Heartbeat Progress dan Task Scheduler untuk Proses Panjang
+
+Bagian ini merupakan catatan operasional tambahan untuk mode **All Rows**, terutama ketika jumlah data besar dan proses dijalankan melalui Windows Task Scheduler.
+
+## Heartbeat Setiap 500 Row
+
+Untuk proses yang membutuhkan waktu lama, script All Rows dapat menggunakan heartbeat agar file log tetap menunjukkan bahwa proses masih aktif tanpa mencetak setiap NIK.
+
+Konfigurasi heartbeat:
+
+```python
+HEARTBEAT_INTERVAL = 500
+```
+
+Heartbeat dicetak setiap 500 row yang telah selesai diproses dan menampilkan:
+
+```text
+Progress
+Persentase
+Elapsed time
+ETA
+```
+
+Contoh:
+
+```text
+Total row data       : 18405
+Total row diproses   : 18405
+Mode                 : SEMUA ROW
+Update               : HANYA CELL O/P/Q/R YANG BERUBAH
+Heartbeat            : SETIAP 500 ROW
+
+Progress : 500 / 18405 (2.72%) | Elapsed: 00:04:14 | ETA: 02:31:38
+Progress : 1000 / 18405 (5.43%) | Elapsed: 00:08:29 | ETA: 02:27:44
+Progress : 1500 / 18405 (8.15%) | Elapsed: 00:12:46 | ETA: 02:23:58
+...
+Progress : 18000 / 18405 (97.80%) | Elapsed: 02:31:42 | ETA: 00:03:24
+Progress : 18405 / 18405 (100.00%) | Elapsed: 02:35:09 | ETA: 00:00:00
+
+Mengupdate Google Spreadsheet...
+```
+
+`ETA` dihitung ulang berdasarkan rata-rata waktu pemrosesan row yang sudah selesai.
+
+Karena response API dan kondisi jaringan dapat berubah, nilai ETA bersifat estimasi dan dapat naik atau turun selama proses berjalan.
+
+Heartbeat tidak mengubah logic pengecekan, differential update, statistik, maupun batch update Google Sheets. Fungsinya hanya memberikan visibility terhadap proses yang berjalan lama.
+
+---
+
+## Mengapa Progress `tqdm` Tidak Muncul di Log Task Scheduler
+
+Pada mode non-interactive seperti Task Scheduler, `stdout` bukan terminal interaktif.
+
+Jika `tqdm` dikonfigurasi dengan:
+
+```python
+disable=not sys.stdout.isatty()
+```
+
+maka progress bar `tqdm` otomatis tidak ditampilkan pada file log.
+
+Heartbeat digunakan agar log tetap memperlihatkan perkembangan proses tanpa menghasilkan ribuan baris output.
+
+---
+
+# Execution Time Limit Task Scheduler
+
+Proses All Rows dapat membutuhkan waktu lebih dari dua jam karena setiap NIK melakukan request ke API BSrE.
+
+Periksa konfigurasi task:
+
+```powershell
+(Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync").Settings |
+Format-List ExecutionTimeLimit,AllowHardTerminate,MultipleInstances
+```
+
+Jika hasilnya:
+
+```text
+ExecutionTimeLimit : PT2H
+AllowHardTerminate : True
+```
+
+maka Task Scheduler dapat menghentikan proses setelah dua jam.
+
+Untuk workload besar, rekomendasi konfigurasi adalah:
+
+```text
+ExecutionTimeLimit : PT0S
+```
+
+`PT0S` berarti tidak memberikan batas maksimum durasi eksekusi dari Task Scheduler.
+
+Script akan berhenti ketika proses selesai atau ketika terjadi error yang menyebabkan proses keluar.
+
+## Mengubah Execution Time Limit melalui PowerShell
+
+Jalankan:
+
+```powershell
+$TaskName = "BSRE Daily Certificate Sync"
+
+$Task = Get-ScheduledTask -TaskName $TaskName
+
+$Task.Settings.ExecutionTimeLimit = "PT0S"
+
+Set-ScheduledTask -InputObject $Task
+```
+
+Validasi:
+
+```powershell
+(Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync").Settings |
+Format-List ExecutionTimeLimit,AllowHardTerminate
+```
+
+Expected:
+
+```text
+ExecutionTimeLimit : PT0S
+```
+
+`AllowHardTerminate = True` tidak menjadi masalah selama tidak ada batas waktu yang memaksa Task Scheduler menghentikan proses.
+
+---
+
+# LastTaskResult `267014` / `0x41306`
+
+Jika command:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "BSRE Daily Certificate Sync" |
+Format-List LastRunTime,LastTaskResult,NextRunTime
+```
+
+menghasilkan:
+
+```text
+LastTaskResult : 267014
+```
+
+nilai tersebut sama dengan:
+
+```text
+0x41306
+```
+
+Status tersebut menunjukkan bahwa eksekusi task sebelumnya **terminated / dihentikan**.
+
+Jika kondisi tersebut bersamaan dengan:
+
+```text
+ExecutionTimeLimit : PT2H
+AllowHardTerminate : True
+```
+
+maka penyebab yang sangat mungkin adalah proses mencapai batas dua jam lalu dihentikan oleh Task Scheduler.
+
+Gejalanya dapat berupa file log yang berhenti di tengah proses dan tidak memiliki footer seperti:
+
+```text
+End Time
+Duration
+BSRE Sync SUCCESS
+BSRE Sync FAILED
+```
+
+Hal ini terjadi karena proses `powershell.exe` yang menjalankan `run_bsre.ps1` ikut dihentikan sebelum sempat menulis bagian akhir log.
+
+---
+
+# Test Task Scheduler Secara Manual
+
+Setelah source code dan konfigurasi Task Scheduler diperbarui, task dapat dijalankan manual dengan:
+
+```powershell
+Start-ScheduledTask -TaskName "BSRE Daily Certificate Sync"
+```
+
+Cek state:
+
+```powershell
+Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync"
+```
+
+Ketika masih berjalan:
+
+```text
+State : Running
+```
+
+Setelah selesai:
+
+```text
+State : Ready
+```
+
+> `Ready` hanya berarti task saat ini tidak sedang berjalan. Status tersebut tidak otomatis berarti eksekusi terakhir berhasil.
+
+Untuk memastikan hasil eksekusi, selalu periksa `LastTaskResult`.
+
+---
+
+# Monitoring Log Secara Real-Time
+
+Ambil file log terbaru:
+
+```powershell
+$log = Get-ChildItem "C:\BSRE-Automation\logs\*.log" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+```
+
+Pantau isi log secara real-time:
+
+```powershell
+Get-Content $log.FullName -Wait
+```
+
+Dengan heartbeat aktif, output akan bertambah setiap 500 row sehingga proses dapat dipantau tanpa mencetak informasi setiap NIK.
+
+Contoh:
+
+```text
+Progress : 500 / 18405 (2.72%) | Elapsed: 00:04:14 | ETA: 02:31:38
+Progress : 1000 / 18405 (5.43%) | Elapsed: 00:08:29 | ETA: 02:27:44
+Progress : 1500 / 18405 (8.15%) | Elapsed: 00:12:46 | ETA: 02:23:58
+```
+
+Untuk keluar dari mode monitoring:
+
+```text
+Ctrl + C
+```
+
+`Ctrl + C` pada terminal monitoring hanya menghentikan `Get-Content -Wait`, bukan scheduled task yang sedang berjalan.
+
+---
+
+# Validasi Setelah Task Selesai
+
+Jalankan:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "BSRE Daily Certificate Sync" |
+Format-List LastRunTime,LastTaskResult,NextRunTime
+```
+
+Target eksekusi sukses:
+
+```text
+LastTaskResult : 0
+```
+
+atau pada Task Scheduler GUI:
+
+```text
+Last Run Result : 0x0
+```
+
+Artinya proses selesai normal.
+
+Kemudian periksa footer file log.
+
+Eksekusi sukses seharusnya memiliki informasi seperti:
+
+```text
+End Time   : 12-Sep-2026_14:35:20
+Duration   : 03:14:17
+BSRE Sync SUCCESS : 2026-09-12 14:35:20
+============================================================
+```
+
+---
+
+# Pemeriksaan Status Task
+
+Untuk melihat status task:
+
+```powershell
+Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync"
+```
+
+Contoh ketika masih berjalan:
+
+```text
+TaskPath                                       TaskName                          State
+--------                                       --------                          -----
+\                                              BSRE Daily Certificate Sync       Running
+```
+
+Contoh ketika sudah berhenti:
+
+```text
+TaskPath                                       TaskName                          State
+--------                                       --------                          -----
+\                                              BSRE Daily Certificate Sync       Ready
+```
+
+Jika state `Ready`, periksa hasil terakhir dengan:
+
+```powershell
+Get-ScheduledTaskInfo -TaskName "BSRE Daily Certificate Sync" |
+Format-List LastRunTime,LastTaskResult,NextRunTime
+```
+
+---
+
+# Verifikasi Konfigurasi Task Scheduler
+
+## Action
+
+Periksa:
+
+```powershell
+(Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync").Actions |
+Format-List *
+```
+
+Konfigurasi yang direkomendasikan:
+
+```text
+Execute          : powershell.exe
+Arguments        : -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\BSRE-Automation\run_bsre.ps1"
+WorkingDirectory : C:\BSRE-Automation
+```
+
+## Settings
+
+Periksa:
+
+```powershell
+(Get-ScheduledTask -TaskName "BSRE Daily Certificate Sync").Settings |
+Format-List *
+```
+
+Rekomendasi utama:
+
+```text
+MultipleInstances  : IgnoreNew
+ExecutionTimeLimit : PT0S
+AllowHardTerminate : True
+```
+
+`MultipleInstances : IgnoreNew` mencegah task baru dijalankan apabila instance sebelumnya masih aktif.
+
+---
+
+# Rekomendasi Production untuk Proses All Rows
+
+Untuk jumlah data besar seperti belasan ribu row, rekomendasi konfigurasi:
+
+```text
+Task Name                  : BSRE Daily Certificate Sync
+Mode                       : All Rows
+Heartbeat                  : Every 500 rows
+Execution Time Limit       : Unlimited / PT0S
+Concurrent execution       : Do not start a new instance
+Run with highest privileges: Yes
+Logging                    : Enabled
+Retry on failure           : Enabled
+```
+
+Alur operasional:
+
+```text
+Task Scheduler
+      |
+      v
+run_bsre.ps1
+      |
+      v
+Python All-Rows
+      |
+      +--> Cek API BSrE
+      |
+      +--> Heartbeat setiap 500 row
+      |
+      +--> Differential Update O/P/Q/R
+      |
+      +--> Batch Update Google Sheets
+      |
+      v
+Summary + Footer Log
+```
+
+---
+
+# Catatan Operasional
+
+Jangan menjalankan script Python manual dan scheduled task secara bersamaan.
+
+Dua instance yang berjalan paralel dapat:
+
+```text
+melakukan request API BSrE secara bersamaan
+memproses row yang sama secara bersamaan
+melakukan batch update Google Sheets pada waktu yang sama
+meningkatkan beban API
+meningkatkan risiko race condition
+```
+
+Gunakan konfigurasi Task Scheduler:
+
+```text
+If the task is already running:
+Do not start a new instance
+```
+
+atau pastikan:
+
+```text
+MultipleInstances : IgnoreNew
+```
+
+Jika ingin melakukan test manual melalui Task Scheduler, gunakan:
+
+```powershell
+Start-ScheduledTask -TaskName "BSRE Daily Certificate Sync"
+```
+
+bukan menjalankan script Python secara paralel dengan task yang sudah aktif.
+
+---
+
+# Quick Validation Checklist
+
+Setelah konfigurasi heartbeat dan Task Scheduler diperbarui:
+
+```text
+[ ] Source All Rows sudah menggunakan heartbeat setiap 500 row
+[ ] run_bsre.ps1 tetap menggunakan Python dari venv
+[ ] ExecutionTimeLimit = PT0S
+[ ] MultipleInstances = IgnoreNew
+[ ] Task dapat dijalankan manual
+[ ] State berubah menjadi Running saat proses aktif
+[ ] File log baru terbentuk
+[ ] Heartbeat muncul setiap 500 row
+[ ] Heartbeat terakhir menunjukkan 100%
+[ ] Google Spreadsheet berhasil diupdate
+[ ] Statistik akhir muncul
+[ ] Footer log muncul
+[ ] State kembali menjadi Ready
+[ ] LastTaskResult = 0
+```
 
 # Penggunaan
 
