@@ -1,0 +1,7 @@
+gspread
+requests
+python-dateutil
+python-dotenv
+tqdm
+google-auth
+google-api-python-client
