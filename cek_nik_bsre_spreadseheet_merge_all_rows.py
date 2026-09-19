@@ -505,6 +505,10 @@ def proses_google_sheet():
             value_input_option="USER_ENTERED",
         )
 
+        print("\nHeader yang diperbarui:")
+        for item in header_updates:
+            print(f"- {item['range']}")
+
     # Semua row diproses, termasuk row hidden atau terkena filter.
     # Baris 1 adalah header, sehingga data dimulai dari baris 2.
     total_row = len(data) - 1
@@ -635,22 +639,6 @@ def proses_google_sheet():
         start=1,
     ):
 
-        # ====================================================
-        # HEARTBEAT
-        # ====================================================
-        #
-        # Heartbeat dilakukan pada awal iterasi berikutnya.
-        #
-        # Contoh:
-        # - Saat masuk row ke-501 berarti 500 row sebelumnya
-        #   sudah selesai diperiksa.
-        #
-        # Model ini juga tetap bekerja jika row sebelumnya
-        # terkena "continue", misalnya:
-        # - NIK kosong
-        # - error API
-        # ====================================================
-
         jumlah_selesai_sebelumnya = index_proses - 1
 
         if (
@@ -695,11 +683,6 @@ def proses_google_sheet():
         # NILAI SAAT INI DI GOOGLE SHEETS
         # ====================================================
 
-        # O = index 14
-        # P = index 15
-        # Q = index 16
-        # R = index 17
-
         status_pengguna_lama = ambil_nilai_cell(
             row,
             14,
@@ -733,7 +716,6 @@ def proses_google_sheet():
                 "status_sertifikat"
             ]
 
-            # Update O hanya jika benar-benar berubah.
             if nilai_teks_berubah(
                 status_pengguna_lama,
                 status_pengguna_baru,
@@ -741,18 +723,13 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"O{nomor_baris}",
-                        "values": [
-                            [
-                                status_pengguna_baru
-                            ]
-                        ],
+                        "values": [[status_pengguna_baru]],
                     }
                 )
 
                 perubahan_o += 1
                 row_updated_in_this_iter = True
 
-            # Update P hanya jika benar-benar berubah.
             if nilai_teks_berubah(
                 status_sertifikat_lama,
                 status_sertifikat_baru,
@@ -760,11 +737,7 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"P{nomor_baris}",
-                        "values": [
-                            [
-                                status_sertifikat_baru
-                            ]
-                        ],
+                        "values": [[status_sertifikat_baru]],
                     }
                 )
 
@@ -775,16 +748,12 @@ def proses_google_sheet():
 
             if status_api == "ISSUE":
                 jumlah_issue += 1
-
             elif status_api == "REVOKE":
                 jumlah_revoke += 1
-
             elif status_api == "RENEW":
                 jumlah_renew += 1
-
             elif status_api == "NO_CERTIFICATE":
                 jumlah_no_certificate += 1
-
             elif status_api == "EXPIRED":
                 jumlah_expired += 1
 
@@ -793,7 +762,6 @@ def proses_google_sheet():
                 "status_api"
             ) == "NOT_REGISTERED":
                 jumlah_not_registered += 1
-
             else:
                 jumlah_tidak_diubah += 1
 
@@ -848,11 +816,7 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"Q{nomor_baris}",
-                        "values": [
-                            [
-                                tanggal_terbit_baru
-                            ]
-                        ],
+                        "values": [[tanggal_terbit_baru]],
                     }
                 )
 
@@ -871,11 +835,7 @@ def proses_google_sheet():
                 update_cells.append(
                     {
                         "range": f"R{nomor_baris}",
-                        "values": [
-                            [
-                                tanggal_berakhir_baru
-                            ]
-                        ],
+                        "values": [[tanggal_berakhir_baru]],
                     }
                 )
 
@@ -898,11 +858,6 @@ def proses_google_sheet():
     # ========================================================
     # HEARTBEAT TERAKHIR
     # ========================================================
-    #
-    # Selalu menampilkan 100% setelah seluruh row selesai.
-    # Ini juga menangani jumlah row yang bukan kelipatan 500,
-    # misalnya 18.405 row.
-    # ========================================================
 
     if total_diproses > 0:
         cetak_heartbeat(
@@ -923,28 +878,19 @@ def proses_google_sheet():
             value_input_option="USER_ENTERED",
         )
 
-        # Format tanggal hanya diperlukan apabila Q/R memang berubah.
-        if perubahan_q > 0 or perubahan_r > 0:
-            try:
-                worksheet.format(
-                    "Q2:R",
-                    {
-                        "numberFormat": {
-                            "type": "DATE",
-                            "pattern": "dd-mmm-yyyy",
-                        }
-                    },
-                )
-
-            except Exception as e:
-                print(
-                    f"Peringatan format tanggal: {e}"
-                )
-
         print(
             f"Berhasil mengupdate {len(update_cells)} cell "
             "yang benar-benar berubah."
         )
+
+        print("\nCell yang diperbarui:")
+        for item in update_cells:
+            print(f"- {item['range']}")
+
+        # PENTING:
+        # Tidak ada worksheet.format("Q2:R", ...).
+        # Google Sheets hanya menerima write pada cell individual
+        # O/P/Q/R yang nilainya benar-benar berubah.
 
     else:
         print(
@@ -962,6 +908,13 @@ def proses_google_sheet():
         + perubahan_q
         + perubahan_r
     )
+
+    if total_cell_berubah != len(update_cells):
+        raise RuntimeError(
+            "Inkonsistensi internal: total_cell_berubah "
+            f"({total_cell_berubah}) != jumlah update_cells "
+            f"({len(update_cells)})."
+        )
 
     print("\n" + "=" * 70)
     print(" HASIL PENGECEKAN")
@@ -1071,7 +1024,11 @@ def proses_google_sheet():
 
     print(
         "Google Sheets hanya diupdate pada "
-        "cell O/P/Q/R yang berubah.\n"
+        "cell O/P/Q/R yang berubah."
+    )
+
+    print(
+        "Tidak ada write/format massal ke range Q2:R.\n"
     )
 
 

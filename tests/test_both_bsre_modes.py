@@ -50,7 +50,11 @@ class status_pengguna:
                 f"{year}-{int(month):02d}-{int(day):02d}", "%Y-%m-%d"
             ).strftime("%Y-%m-%d")
 
-        match = re.search(r"^(\d{1,2})-(\w{3,9})-(\d{4})$", normalized, re.IGNORECASE)
+        match = re.search(
+            r"^(\d{1,2})-(\w{3,9})-(\d{4})$",
+            normalized,
+            re.IGNORECASE,
+        )
         if match:
             day, month_name, year = match.groups()
             month_key = month_name.lower()[:3]
@@ -162,7 +166,11 @@ class status_pengguna:
                 continue
 
         if not valid_dates:
-            return {"status": "NO_CERTIFICATE", "tanggal_terbit": "", "tanggal_berakhir": ""}
+            return {
+                "status": "NO_CERTIFICATE",
+                "tanggal_terbit": "",
+                "tanggal_berakhir": "",
+            }
 
         return {
             "status": "SUCCESS",
@@ -172,12 +180,7 @@ class status_pengguna:
 
 
 class app(status_pengguna):
-    """Concrete implementation of the shared BSrE operations.
-
-    The production scripts expose these operations as module-level functions;
-    this adapter keeps the same behaviour available through a concrete object
-    so both modes can be exercised uniformly by the tests.
-    """
+    """Concrete implementation of the shared BSrE operations."""
 
     requests = requests
 
@@ -291,6 +294,14 @@ def make_row(
     return row
 
 
+def printed_lines(mock_print):
+    return [
+        call.args[0].strip()
+        for call in mock_print.call_args_list
+        if call.args and isinstance(call.args[0], str)
+    ]
+
+
 class TestSharedHelpers(unittest.TestCase):
     def test_normalisasi_tanggal_pada_kedua_script(self):
         values = [
@@ -305,20 +316,29 @@ class TestSharedHelpers(unittest.TestCase):
         for app_name, app in APPS:
             for value in values:
                 with self.subTest(app=app_name, value=value):
-                    self.assertEqual(app.normalisasi_tanggal(value), "2026-08-12")
+                    self.assertEqual(
+                        app.normalisasi_tanggal(value),
+                        "2026-08-12",
+                    )
 
     def test_tanggal_format_berbeda_tidak_dianggap_berubah(self):
         for app_name, app in APPS:
             with self.subTest(app=app_name):
                 self.assertFalse(
-                    app.nilai_tanggal_berubah("12-Agu-2026", "2026-08-12")
+                    app.nilai_tanggal_berubah(
+                        "12-Agu-2026",
+                        "2026-08-12",
+                    )
                 )
 
     def test_tanggal_berbeda_dianggap_berubah(self):
         for app_name, app in APPS:
             with self.subTest(app=app_name):
                 self.assertTrue(
-                    app.nilai_tanggal_berubah("12-Agu-2026", "2027-08-12")
+                    app.nilai_tanggal_berubah(
+                        "12-Agu-2026",
+                        "2027-08-12",
+                    )
                 )
 
     def test_teks_dengan_spasi_sama_tidak_dianggap_berubah(self):
@@ -352,13 +372,24 @@ class TestSharedBSrEStatusAPI(unittest.TestCase):
             app.PASSWORD = "pass"
             try:
                 with patch.object(app.requests, "get") as mock_get:
-                    mock_get.return_value = FakeResponse(200, {"status": "ISSUE"})
-                    result = app.cek_status_sertifikat("1234567890123456")
+                    mock_get.return_value = FakeResponse(
+                        200,
+                        {"status": "ISSUE"},
+                    )
+                    result = app.cek_status_sertifikat(
+                        "1234567890123456"
+                    )
                 with self.subTest(app=app_name):
                     self.assertTrue(result["update"])
                     self.assertEqual(result["status_api"], "ISSUE")
-                    self.assertEqual(result["status_pengguna"], "Verified")
-                    self.assertEqual(result["status_sertifikat"], "Issued")
+                    self.assertEqual(
+                        result["status_pengguna"],
+                        "Verified",
+                    )
+                    self.assertEqual(
+                        result["status_sertifikat"],
+                        "Issued",
+                    )
             finally:
                 app.BASE_URL, app.USERNAME, app.PASSWORD = old
 
@@ -371,12 +402,18 @@ class TestSharedBSrEStatusAPI(unittest.TestCase):
             try:
                 with patch.object(app.requests, "get") as mock_get:
                     mock_get.return_value = FakeResponse(
-                        200, {"status": "NOT_REGISTERED"}
+                        200,
+                        {"status": "NOT_REGISTERED"},
                     )
-                    result = app.cek_status_sertifikat("1234567890123456")
+                    result = app.cek_status_sertifikat(
+                        "1234567890123456"
+                    )
                 with self.subTest(app=app_name):
                     self.assertFalse(result["update"])
-                    self.assertEqual(result["status_api"], "NOT_REGISTERED")
+                    self.assertEqual(
+                        result["status_api"],
+                        "NOT_REGISTERED",
+                    )
                     self.assertIsNone(result["status_pengguna"])
                     self.assertIsNone(result["status_sertifikat"])
             finally:
@@ -403,11 +440,19 @@ class TestSharedBSrEProfileAPI(unittest.TestCase):
             try:
                 with patch.object(app.requests, "get") as mock_get:
                     mock_get.return_value = FakeResponse(200, payload)
-                    result = app.cek_profile_sertifikat("1234567890123456")
+                    result = app.cek_profile_sertifikat(
+                        "1234567890123456"
+                    )
                 with self.subTest(app=app_name):
                     self.assertEqual(result["status"], "SUCCESS")
-                    self.assertEqual(result["tanggal_terbit"], "2026-08-12")
-                    self.assertEqual(result["tanggal_berakhir"], "2028-08-12")
+                    self.assertEqual(
+                        result["tanggal_terbit"],
+                        "2026-08-12",
+                    )
+                    self.assertEqual(
+                        result["tanggal_berakhir"],
+                        "2028-08-12",
+                    )
             finally:
                 app.BASE_URL, app.USERNAME, app.PASSWORD = old
 
@@ -421,9 +466,14 @@ class TestSharedBSrEProfileAPI(unittest.TestCase):
             try:
                 with patch.object(app.requests, "get") as mock_get:
                     mock_get.return_value = FakeResponse(200, payload)
-                    result = app.cek_profile_sertifikat("1234567890123456")
+                    result = app.cek_profile_sertifikat(
+                        "1234567890123456"
+                    )
                 with self.subTest(app=app_name):
-                    self.assertEqual(result["status"], "NO_CERTIFICATE")
+                    self.assertEqual(
+                        result["status"],
+                        "NO_CERTIFICATE",
+                    )
                     self.assertEqual(result["tanggal_terbit"], "")
                     self.assertEqual(result["tanggal_berakhir"], "")
             finally:
@@ -438,7 +488,9 @@ class TestSharedBSrEProfileAPI(unittest.TestCase):
             try:
                 with patch.object(app.requests, "get") as mock_get:
                     mock_get.return_value = FakeResponse(404, {})
-                    result = app.cek_profile_sertifikat("1234567890123456")
+                    result = app.cek_profile_sertifikat(
+                        "1234567890123456"
+                    )
                 with self.subTest(app=app_name):
                     self.assertEqual(result["status"], "NOT_FOUND")
             finally:
@@ -466,7 +518,10 @@ class TestFilteredMode(unittest.TestCase):
         old_id = filtered_app.SPREADSHEET_ID
         filtered_app.SPREADSHEET_ID = "test-spreadsheet"
         try:
-            result = filtered_app.ambil_row_terlihat(service, worksheet)
+            result = filtered_app.ambil_row_terlihat(
+                service,
+                worksheet,
+            )
         finally:
             filtered_app.SPREADSHEET_ID = old_id
         self.assertEqual(result, [1, 2, 5])
@@ -512,7 +567,10 @@ class TestFilteredMode(unittest.TestCase):
                 "tanggal_berakhir": "2026-08-12",
             }
 
-        old = (filtered_app.SPREADSHEET_ID, filtered_app.WORKSHEET_NAME)
+        old = (
+            filtered_app.SPREADSHEET_ID,
+            filtered_app.WORKSHEET_NAME,
+        )
         filtered_app.SPREADSHEET_ID = "test-spreadsheet"
         filtered_app.WORKSHEET_NAME = "Data"
 
@@ -521,7 +579,12 @@ class TestFilteredMode(unittest.TestCase):
                 patch.object(
                     filtered_app,
                     "koneksi_google",
-                    return_value=(None, None, worksheet, sheets_service),
+                    return_value=(
+                        None,
+                        None,
+                        worksheet,
+                        sheets_service,
+                    ),
                 ),
                 patch.object(
                     filtered_app,
@@ -533,7 +596,11 @@ class TestFilteredMode(unittest.TestCase):
                     "cek_profile_sertifikat",
                     side_effect=fake_profile,
                 ),
-                patch.object(filtered_app.time, "sleep", return_value=None),
+                patch.object(
+                    filtered_app.time,
+                    "sleep",
+                    return_value=None,
+                ),
                 patch.object(
                     filtered_app,
                     "tqdm",
@@ -542,11 +609,138 @@ class TestFilteredMode(unittest.TestCase):
             ):
                 filtered_app.proses_google_sheet()
         finally:
-            filtered_app.SPREADSHEET_ID, filtered_app.WORKSHEET_NAME = old
+            (
+                filtered_app.SPREADSHEET_ID,
+                filtered_app.WORKSHEET_NAME,
+            ) = old
 
-        self.assertEqual(status_calls, ["1111111111111111"])
-        self.assertEqual(profile_calls, ["1111111111111111"])
+        self.assertEqual(
+            status_calls,
+            ["1111111111111111"],
+        )
+        self.assertEqual(
+            profile_calls,
+            ["1111111111111111"],
+        )
         self.assertEqual(worksheet.batch_updates, [])
+        self.assertEqual(worksheet.formats, [])
+
+    def test_filtered_perubahan_tanggal_hanya_update_q_r_tanpa_format_massal(
+        self,
+    ):
+        data = [
+            make_header(),
+            make_row(
+                "1111111111111111",
+                tanggal_terbit="2024-08-12",
+                tanggal_berakhir="2026-08-12",
+            ),
+        ]
+        worksheet = FakeWorksheet(data)
+
+        metadata = {
+            "sheets": [{
+                "data": [{
+                    "startRow": 0,
+                    "rowMetadata": [
+                        {},
+                        {},
+                    ],
+                }]
+            }]
+        }
+        sheets_service = FakeSheetsService(metadata)
+
+        def fake_status(nik):
+            return {
+                "update": True,
+                "status_api": "ISSUE",
+                "status_pengguna": "Verified",
+                "status_sertifikat": "Issued",
+            }
+
+        def fake_profile(nik):
+            return {
+                "status": "SUCCESS",
+                "tanggal_terbit": "2025-08-12",
+                "tanggal_berakhir": "2027-08-12",
+            }
+
+        old = (
+            filtered_app.SPREADSHEET_ID,
+            filtered_app.WORKSHEET_NAME,
+        )
+        filtered_app.SPREADSHEET_ID = "test-spreadsheet"
+        filtered_app.WORKSHEET_NAME = "Data"
+
+        try:
+            with (
+                patch.object(
+                    filtered_app,
+                    "koneksi_google",
+                    return_value=(
+                        None,
+                        None,
+                        worksheet,
+                        sheets_service,
+                    ),
+                ),
+                patch.object(
+                    filtered_app,
+                    "cek_status_sertifikat",
+                    side_effect=fake_status,
+                ),
+                patch.object(
+                    filtered_app,
+                    "cek_profile_sertifikat",
+                    side_effect=fake_profile,
+                ),
+                patch.object(
+                    filtered_app.time,
+                    "sleep",
+                    return_value=None,
+                ),
+                patch.object(
+                    filtered_app,
+                    "tqdm",
+                    side_effect=lambda iterable, **kwargs: iterable,
+                ),
+                patch("builtins.print") as mock_print,
+            ):
+                filtered_app.proses_google_sheet()
+        finally:
+            (
+                filtered_app.SPREADSHEET_ID,
+                filtered_app.WORKSHEET_NAME,
+            ) = old
+
+        self.assertEqual(
+            len(worksheet.batch_updates),
+            1,
+        )
+
+        update_data = worksheet.batch_updates[0]["data"]
+
+        self.assertEqual(
+            update_data,
+            [
+                {
+                    "range": "Q2",
+                    "values": [["2025-08-12"]],
+                },
+                {
+                    "range": "R2",
+                    "values": [["2027-08-12"]],
+                },
+            ],
+        )
+
+        self.assertEqual(worksheet.formats, [])
+
+        log_lines = printed_lines(mock_print)
+        self.assertIn("Cell yang diperbarui:", log_lines)
+        self.assertIn("- Q2", log_lines)
+        self.assertIn("- R2", log_lines)
 
 
 class TestAllRowsMode(unittest.TestCase):
@@ -578,7 +772,10 @@ class TestAllRowsMode(unittest.TestCase):
                 "tanggal_berakhir": "2026-08-12",
             }
 
-        old = (all_rows_app.SPREADSHEET_ID, all_rows_app.WORKSHEET_NAME)
+        old = (
+            all_rows_app.SPREADSHEET_ID,
+            all_rows_app.WORKSHEET_NAME,
+        )
         all_rows_app.SPREADSHEET_ID = "test-spreadsheet"
         all_rows_app.WORKSHEET_NAME = "Data"
 
@@ -599,7 +796,11 @@ class TestAllRowsMode(unittest.TestCase):
                     "cek_profile_sertifikat",
                     side_effect=fake_profile,
                 ),
-                patch.object(all_rows_app.time, "sleep", return_value=None),
+                patch.object(
+                    all_rows_app.time,
+                    "sleep",
+                    return_value=None,
+                ),
                 patch.object(
                     all_rows_app,
                     "tqdm",
@@ -608,23 +809,39 @@ class TestAllRowsMode(unittest.TestCase):
             ):
                 all_rows_app.proses_google_sheet()
         finally:
-            all_rows_app.SPREADSHEET_ID, all_rows_app.WORKSHEET_NAME = old
+            (
+                all_rows_app.SPREADSHEET_ID,
+                all_rows_app.WORKSHEET_NAME,
+            ) = old
 
         self.assertEqual(
             status_calls,
-            ["1111111111111111", "2222222222222222"],
+            [
+                "1111111111111111",
+                "2222222222222222",
+            ],
         )
         self.assertEqual(
             profile_calls,
-            ["1111111111111111", "2222222222222222"],
+            [
+                "1111111111111111",
+                "2222222222222222",
+            ],
         )
         self.assertEqual(worksheet.batch_updates, [])
+        self.assertEqual(worksheet.formats, [])
 
     def test_all_rows_hanya_update_cell_yang_berubah(self):
         data = [
             make_header(),
-            make_row("1111111111111111", status_sertifikat="Issued"),
-            make_row("2222222222222222", status_sertifikat="Issued"),
+            make_row(
+                "1111111111111111",
+                status_sertifikat="Issued",
+            ),
+            make_row(
+                "2222222222222222",
+                status_sertifikat="Issued",
+            ),
         ]
         worksheet = FakeWorksheet(data)
 
@@ -650,7 +867,10 @@ class TestAllRowsMode(unittest.TestCase):
                 "tanggal_berakhir": "2026-08-12",
             }
 
-        old = (all_rows_app.SPREADSHEET_ID, all_rows_app.WORKSHEET_NAME)
+        old = (
+            all_rows_app.SPREADSHEET_ID,
+            all_rows_app.WORKSHEET_NAME,
+        )
         all_rows_app.SPREADSHEET_ID = "test-spreadsheet"
         all_rows_app.WORKSHEET_NAME = "Data"
 
@@ -671,24 +891,151 @@ class TestAllRowsMode(unittest.TestCase):
                     "cek_profile_sertifikat",
                     side_effect=fake_profile,
                 ),
-                patch.object(all_rows_app.time, "sleep", return_value=None),
+                patch.object(
+                    all_rows_app.time,
+                    "sleep",
+                    return_value=None,
+                ),
                 patch.object(
                     all_rows_app,
                     "tqdm",
                     side_effect=lambda iterable, **kwargs: iterable,
                 ),
+                patch("builtins.print") as mock_print,
             ):
                 all_rows_app.proses_google_sheet()
         finally:
-            all_rows_app.SPREADSHEET_ID, all_rows_app.WORKSHEET_NAME = old
+            (
+                all_rows_app.SPREADSHEET_ID,
+                all_rows_app.WORKSHEET_NAME,
+            ) = old
 
-        self.assertEqual(len(worksheet.batch_updates), 1)
+        self.assertEqual(
+            len(worksheet.batch_updates),
+            1,
+        )
+
         update_data = worksheet.batch_updates[0]["data"]
+
         self.assertEqual(
             update_data,
-            [{"range": "P3", "values": [["Expired"]]}],
+            [
+                {
+                    "range": "P3",
+                    "values": [["Expired"]],
+                }
+            ],
         )
+
         self.assertEqual(worksheet.formats, [])
+
+        log_lines = printed_lines(mock_print)
+        self.assertIn("Cell yang diperbarui:", log_lines)
+        self.assertIn("- P3", log_lines)
+
+    def test_all_rows_perubahan_tanggal_hanya_update_q_r_tanpa_format_massal(
+        self,
+    ):
+        data = [
+            make_header(),
+            make_row(
+                "1111111111111111",
+                tanggal_terbit="2024-08-12",
+                tanggal_berakhir="2026-08-12",
+            ),
+        ]
+        worksheet = FakeWorksheet(data)
+
+        def fake_status(nik):
+            return {
+                "update": True,
+                "status_api": "ISSUE",
+                "status_pengguna": "Verified",
+                "status_sertifikat": "Issued",
+            }
+
+        def fake_profile(nik):
+            return {
+                "status": "SUCCESS",
+                "tanggal_terbit": "2025-08-12",
+                "tanggal_berakhir": "2027-08-12",
+            }
+
+        old = (
+            all_rows_app.SPREADSHEET_ID,
+            all_rows_app.WORKSHEET_NAME,
+        )
+        all_rows_app.SPREADSHEET_ID = "test-spreadsheet"
+        all_rows_app.WORKSHEET_NAME = "Data"
+
+        try:
+            with (
+                patch.object(
+                    all_rows_app,
+                    "koneksi_google",
+                    return_value=(None, None, worksheet),
+                ),
+                patch.object(
+                    all_rows_app,
+                    "cek_status_sertifikat",
+                    side_effect=fake_status,
+                ),
+                patch.object(
+                    all_rows_app,
+                    "cek_profile_sertifikat",
+                    side_effect=fake_profile,
+                ),
+                patch.object(
+                    all_rows_app.time,
+                    "sleep",
+                    return_value=None,
+                ),
+                patch.object(
+                    all_rows_app,
+                    "tqdm",
+                    side_effect=lambda iterable, **kwargs: iterable,
+                ),
+                patch("builtins.print") as mock_print,
+            ):
+                all_rows_app.proses_google_sheet()
+        finally:
+            (
+                all_rows_app.SPREADSHEET_ID,
+                all_rows_app.WORKSHEET_NAME,
+            ) = old
+
+        self.assertEqual(
+            len(worksheet.batch_updates),
+            1,
+        )
+
+        update_data = worksheet.batch_updates[0]["data"]
+
+        self.assertEqual(
+            update_data,
+            [
+                {
+                    "range": "Q2",
+                    "values": [["2025-08-12"]],
+                },
+                {
+                    "range": "R2",
+                    "values": [["2027-08-12"]],
+                },
+            ],
+        )
+
+        # Regression guard utama:
+        # Q/R boleh berubah, tetapi tidak boleh ada format massal Q2:R.
+        self.assertEqual(
+            worksheet.formats,
+            [],
+        )
+
+        log_lines = printed_lines(mock_print)
+        self.assertIn("Cell yang diperbarui:", log_lines)
+        self.assertIn("- Q2", log_lines)
+        self.assertIn("- R2", log_lines)
 
 
 if __name__ == "__main__":

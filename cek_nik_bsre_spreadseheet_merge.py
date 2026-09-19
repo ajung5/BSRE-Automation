@@ -109,7 +109,7 @@ def mulai_logging():
     Membuat file log baru untuk setiap eksekusi script.
 
     File disimpan di:
-        ./logs/bsre_ManualCheck_YYYY-MM-DD_HHMMSS.log
+        ./logs/bsre_filteredROW_YYYY-MM-DD_HHMMSS.log
     """
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -219,21 +219,11 @@ def ambil_nilai_cell(row, index):
     return ""
 
 
-
 def normalisasi_tanggal(value):
     """
     Menormalisasi berbagai format tanggal menjadi YYYY-MM-DD
     agar tanggal yang sama tidak dianggap berubah hanya karena
     format tampilannya berbeda.
-
-    Contoh yang didukung:
-    - 2026-08-12
-    - 12-08-2026
-    - 12/08/2026
-    - 12-Agu-2026
-    - 12-Aug-2026
-    - 12 Agustus 2026
-    - 12 August 2026
     """
     if value is None:
         return ""
@@ -264,23 +254,19 @@ def normalisasi_tanggal(value):
 
     if len(parts) == 3:
         try:
-            # dd-mmm-yyyy / dd-bulan-yyyy
             if len(parts[0]) <= 2:
                 hari = int(parts[0])
                 bulan_text = parts[1].strip().lower().rstrip(".")
                 tahun = int(parts[2])
-
                 bulan = BULAN_MAPPING.get(bulan_text)
 
                 if bulan:
                     return f"{tahun:04d}-{bulan:02d}-{hari:02d}"
 
-            # yyyy-mmm-dd / yyyy-bulan-dd
             if len(parts[0]) == 4:
                 tahun = int(parts[0])
                 bulan_text = parts[1].strip().lower().rstrip(".")
                 hari = int(parts[2])
-
                 bulan = BULAN_MAPPING.get(bulan_text)
 
                 if bulan:
@@ -289,10 +275,7 @@ def normalisasi_tanggal(value):
         except (ValueError, TypeError):
             pass
 
-    # Jika format tidak dikenali, pertahankan nilai aslinya supaya
-    # perbedaan nyata tetap terdeteksi sebagai perubahan.
     return value
-
 
 
 def nilai_teks_berubah(nilai_lama, nilai_baru):
@@ -301,7 +284,6 @@ def nilai_teks_berubah(nilai_lama, nilai_baru):
     baru = "" if nilai_baru is None else str(nilai_baru).strip()
 
     return lama != baru
-
 
 
 def nilai_tanggal_berubah(nilai_lama, nilai_baru):
@@ -359,8 +341,6 @@ def ambil_row_terlihat(sheets_service, worksheet):
     """
     Mengambil nomor row yang tidak disembunyikan oleh filter
     dan tidak disembunyikan manual oleh user.
-
-    Hanya row yang terlihat inilah yang akan diproses.
     """
     sheet_name = worksheet.title
 
@@ -490,9 +470,6 @@ def cek_profile_sertifikat(nik):
 
             certificate_terbaru = daftar_sertifikat_valid[0]
             tanggal_expired = certificate_terbaru["tanggal"]
-
-            # Mengikuti logika script sebelumnya:
-            # tanggal terbit dihitung 2 tahun sebelum tanggal berakhir.
             tanggal_issue = tanggal_expired - relativedelta(years=2)
 
             tanggal_terbit = tanggal_issue.strftime("%Y-%m-%d")
@@ -655,6 +632,10 @@ def proses_google_sheet():
             value_input_option="USER_ENTERED",
         )
 
+        print("\nHeader yang diperbarui:")
+        for item in header_updates:
+            print(f"- {item['range']}")
+
     # ========================================================
     # DETEKSI ROW YANG TERLIHAT
     # ========================================================
@@ -666,9 +647,6 @@ def proses_google_sheet():
         worksheet,
     )
 
-    # Header adalah row 1. Batasi juga sampai jumlah row yang benar-benar
-    # tersedia pada get_all_values() agar metadata grid di luar data
-    # tidak ikut dihitung/diproses.
     row_terlihat_data = [
         row
         for row in row_terlihat
@@ -694,10 +672,6 @@ def proses_google_sheet():
     update_cells = []
     row_yang_diubah = set()
 
-    # ========================================================
-    # STATISTIK PERUBAHAN CELL
-    # ========================================================
-
     perubahan_o = 0
     perubahan_p = 0
     perubahan_q = 0
@@ -705,19 +679,11 @@ def proses_google_sheet():
 
     jumlah_row_tanpa_perubahan = 0
 
-    # ========================================================
-    # STATISTIK PROFILE
-    # ========================================================
-
     jumlah_sukses = 0
     jumlah_tidak_ada_sertifikat = 0
     jumlah_tidak_ditemukan = 0
     jumlah_tanggal_tidak_valid = 0
     jumlah_no_data = 0
-
-    # ========================================================
-    # STATISTIK STATUS
-    # ========================================================
 
     jumlah_issue = 0
     jumlah_revoke = 0
@@ -754,10 +720,6 @@ def proses_google_sheet():
             jumlah_nik_kosong += 1
             continue
 
-        # ====================================================
-        # REQUEST KEDUA API
-        # ====================================================
-
         hasil_status = cek_status_sertifikat(nik)
         hasil_profile = cek_profile_sertifikat(nik)
 
@@ -768,29 +730,15 @@ def proses_google_sheet():
 
         row_updated_in_this_iter = False
 
-        # ====================================================
-        # NILAI SAAT INI DI GOOGLE SHEETS
-        # ====================================================
-
-        # O = index 14
-        # P = index 15
-        # Q = index 16
-        # R = index 17
-
         status_pengguna_lama = ambil_nilai_cell(row, 14)
         status_sertifikat_lama = ambil_nilai_cell(row, 15)
         tanggal_terbit_lama = ambil_nilai_cell(row, 16)
         tanggal_berakhir_lama = ambil_nilai_cell(row, 17)
 
-        # ====================================================
-        # UPDATE STATUS - KOLOM O & P
-        # ====================================================
-
         if hasil_status["update"]:
             status_pengguna_baru = hasil_status["status_pengguna"]
             status_sertifikat_baru = hasil_status["status_sertifikat"]
 
-            # Update O hanya jika benar-benar berubah.
             if nilai_teks_berubah(
                 status_pengguna_lama,
                 status_pengguna_baru,
@@ -805,7 +753,6 @@ def proses_google_sheet():
                 perubahan_o += 1
                 row_updated_in_this_iter = True
 
-            # Update P hanya jika benar-benar berubah.
             if nilai_teks_berubah(
                 status_sertifikat_lama,
                 status_sertifikat_baru,
@@ -839,10 +786,6 @@ def proses_google_sheet():
             else:
                 jumlah_tidak_diubah += 1
 
-        # ====================================================
-        # PROFILE TANGGAL - KOLOM Q & R
-        # ====================================================
-
         status_prof = hasil_profile.get("status", "")
 
         tanggal_terbit_baru = None
@@ -869,10 +812,6 @@ def proses_google_sheet():
         elif status_prof == "NO_DATA":
             jumlah_no_data += 1
 
-        # ====================================================
-        # BANDINGKAN Q - TANGGAL TERBIT
-        # ====================================================
-
         if tanggal_terbit_baru is not None:
             if nilai_tanggal_berubah(
                 tanggal_terbit_lama,
@@ -888,10 +827,6 @@ def proses_google_sheet():
                 perubahan_q += 1
                 row_updated_in_this_iter = True
 
-        # ====================================================
-        # BANDINGKAN R - TANGGAL BERAKHIR
-        # ====================================================
-
         if tanggal_berakhir_baru is not None:
             if nilai_tanggal_berubah(
                 tanggal_berakhir_lama,
@@ -906,10 +841,6 @@ def proses_google_sheet():
 
                 perubahan_r += 1
                 row_updated_in_this_iter = True
-
-        # ====================================================
-        # CATAT ROW BERUBAH / TIDAK BERUBAH
-        # ====================================================
 
         if row_updated_in_this_iter:
             row_yang_diubah.add(nomor_baris)
@@ -930,25 +861,19 @@ def proses_google_sheet():
             value_input_option="USER_ENTERED",
         )
 
-        # Format tanggal hanya diperlukan jika Q/R memang berubah.
-        if perubahan_q > 0 or perubahan_r > 0:
-            try:
-                worksheet.format(
-                    "Q2:R",
-                    {
-                        "numberFormat": {
-                            "type": "DATE",
-                            "pattern": "dd-mmm-yyyy",
-                        }
-                    },
-                )
-            except Exception as e:
-                print(f"Peringatan format tanggal: {e}")
-
         print(
             f"Berhasil mengupdate {len(update_cells)} cell "
             "yang benar-benar berubah."
         )
+
+        print("\nCell yang diperbarui:")
+        for item in update_cells:
+            print(f"- {item['range']}")
+
+        # PENTING:
+        # Tidak ada worksheet.format("Q2:R", ...).
+        # Google Sheets hanya menerima write pada cell individual
+        # O/P/Q/R yang nilainya benar-benar berubah.
 
     else:
         print(
@@ -966,6 +891,13 @@ def proses_google_sheet():
         + perubahan_q
         + perubahan_r
     )
+
+    if total_cell_berubah != len(update_cells):
+        raise RuntimeError(
+            "Inkonsistensi internal: total_cell_berubah "
+            f"({total_cell_berubah}) != jumlah update_cells "
+            f"({len(update_cells)})."
+        )
 
     print("\n" + "=" * 70)
     print(" HASIL PENGECEKAN")
@@ -1012,6 +944,7 @@ def proses_google_sheet():
 
     print("Mode  : ROW TERLIHAT / HASIL FILTER")
     print("Write : HANYA CELL O/P/Q/R YANG BERUBAH")
+    print("Tidak ada write/format massal ke range Q2:R.")
     print("Row hidden oleh filter atau user tidak diproses.\n")
 
 
