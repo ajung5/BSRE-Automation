@@ -12,7 +12,6 @@ from tqdm import tqdm
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-
 # ============================================================
 # KONFIGURASI
 # ============================================================
@@ -114,10 +113,7 @@ def mulai_logging():
     os.makedirs(LOG_DIR, exist_ok=True)
 
     waktu_mulai = datetime.now()
-    nama_file = (
-        "bsre_filteredROW_"
-        f"{waktu_mulai.strftime('%Y-%m-%d_%H%M%S')}.log"
-    )
+    nama_file = "bsre_filteredROW_" f"{waktu_mulai.strftime('%Y-%m-%d_%H%M%S')}.log"
     path_log = os.path.join(LOG_DIR, nama_file)
 
     log_file = open(path_log, "a", encoding="utf-8", buffering=1)
@@ -144,10 +140,7 @@ def tutup_logging(
         print()
         print(f"End Time   : {waktu_selesai.strftime('%d-%b-%Y_%H:%M:%S')}")
         print(f"Duration   : {durasi}")
-        print(
-            f"BSRE Sync {status} : "
-            f"{waktu_selesai.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        print(f"BSRE Sync {status} : " f"{waktu_selesai.strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 60)
     finally:
         sys.stdout = stdout_asli
@@ -298,9 +291,7 @@ def nilai_tanggal_berubah(nilai_lama, nilai_baru):
 
 def koneksi_google():
     if not GOOGLE_CREDENTIALS:
-        raise ValueError(
-            "\nGOOGLE_CREDENTIALS belum diisi pada file .env."
-        )
+        raise ValueError("\nGOOGLE_CREDENTIALS belum diisi pada file .env.")
 
     if not os.path.exists(GOOGLE_CREDENTIALS):
         raise FileNotFoundError(
@@ -345,18 +336,17 @@ def ambil_row_terlihat(sheets_service, worksheet):
     sheet_name = worksheet.title
 
     response = (
-        sheets_service
-        .spreadsheets()
+        sheets_service.spreadsheets()
         .get(
             spreadsheetId=SPREADSHEET_ID,
             ranges=sheet_name,
             fields=(
                 "sheets("
-                    "properties(sheetId,title),"
-                    "data("
-                        "startRow,"
-                        "rowMetadata(hiddenByFilter,hiddenByUser)"
-                    ")"
+                "properties(sheetId,title),"
+                "data("
+                "startRow,"
+                "rowMetadata(hiddenByFilter,hiddenByUser)"
+                ")"
                 ")"
             ),
         )
@@ -492,9 +482,7 @@ def cek_profile_sertifikat(nik):
                 "tanggal_berakhir": "",
             }
 
-        print(
-            f"\nHTTP ERROR {response.status_code} - NIK {nik} (Profile)"
-        )
+        print(f"\nHTTP ERROR {response.status_code} - NIK {nik} (Profile)")
         return None
 
     except Exception as e:
@@ -551,9 +539,7 @@ def cek_status_sertifikat(nik):
             print(f"\nUNAUTHORIZED - NIK {nik} (Status)")
             return None
 
-        print(
-            f"\nHTTP ERROR {response.status_code} - NIK {nik} (Status)"
-        )
+        print(f"\nHTTP ERROR {response.status_code} - NIK {nik} (Status)")
         return None
 
     except Exception as e:
@@ -596,10 +582,7 @@ def proses_google_sheet():
         raise ValueError("\nKolom 'NIK' tidak ditemukan.")
 
     if kolom_nik_index != 3:
-        print(
-            f"\nPERINGATAN: Kolom NIK ditemukan di posisi "
-            f"{kolom_nik_index}, bukan kolom C.\n"
-        )
+        print(f"\nPERINGATAN: Kolom NIK ditemukan di posisi " f"{kolom_nik_index}, bukan kolom C.\n")
 
     # ========================================================
     # HEADER Q & R - UPDATE HANYA JIKA BERBEDA
@@ -647,11 +630,7 @@ def proses_google_sheet():
         worksheet,
     )
 
-    row_terlihat_data = [
-        row
-        for row in row_terlihat
-        if 2 <= row <= len(data)
-    ]
+    row_terlihat_data = [row for row in row_terlihat if 2 <= row <= len(data)]
 
     total_row = len(data) - 1
     total_terlihat = len(row_terlihat_data)
@@ -664,10 +643,7 @@ def proses_google_sheet():
     print("Mode                 : ROW TERLIHAT / HASIL FILTER")
     print("Update               : HANYA CELL O/P/Q/R YANG BERUBAH\n")
 
-    print(
-        "Hanya row terlihat yang dicek. "
-        "Row hidden oleh filter atau user TIDAK diproses.\n"
-    )
+    print("Hanya row terlihat yang dicek. " "Row hidden oleh filter atau user TIDAK diproses.\n")
 
     update_cells = []
     row_yang_diubah = set()
@@ -861,10 +837,7 @@ def proses_google_sheet():
             value_input_option="USER_ENTERED",
         )
 
-        print(
-            f"Berhasil mengupdate {len(update_cells)} cell "
-            "yang benar-benar berubah."
-        )
+        print(f"Berhasil mengupdate {len(update_cells)} cell " "yang benar-benar berubah.")
 
         print("\nCell yang diperbarui:")
         for item in update_cells:
@@ -876,21 +849,13 @@ def proses_google_sheet():
         # O/P/Q/R yang nilainya benar-benar berubah.
 
     else:
-        print(
-            "Tidak ada perubahan data. "
-            "Tidak ada cell O/P/Q/R yang diupdate."
-        )
+        print("Tidak ada perubahan data. " "Tidak ada cell O/P/Q/R yang diupdate.")
 
     # ========================================================
     # HASIL AKHIR
     # ========================================================
 
-    total_cell_berubah = (
-        perubahan_o
-        + perubahan_p
-        + perubahan_q
-        + perubahan_r
-    )
+    total_cell_berubah = perubahan_o + perubahan_p + perubahan_q + perubahan_r
 
     if total_cell_berubah != len(update_cells):
         raise RuntimeError(
