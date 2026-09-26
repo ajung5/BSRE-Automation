@@ -1,40 +1,57 @@
-# Revision Notes — Strict Differential Write
+# Revision Notes — Date Idempotency & Scheduler Safety
 
-Perubahan utama:
+Tanggal: 26 September 2026
 
-1. Menghapus seluruh pemanggilan aktif `worksheet.format("Q2:R", ...)` dari mode all-rows dan filtered.
-2. Google Sheets hanya menerima `batch_update` untuk cell individual O/P/Q/R yang benar-benar berubah.
-3. Menambahkan log exact cell range:
-   - `Cell yang diperbarui:`
-   - contoh `P128`, `Q128`, `R128`.
-4. Menambahkan invariant:
-   `total_cell_berubah == len(update_cells)`.
-5. Menambahkan regression test untuk:
-   - perubahan status individual;
-   - perubahan Q/R tanpa format massal;
-   - mode all-rows;
-   - mode filtered;
-   - exact-cell logging.
-6. README dan dokumentasi logging disesuaikan.
+## Root cause yang diperbaiki
 
-Validasi:
-- Python syntax: PASS
-- Regression tests: 17 PASS, 0 failure, 0 error
-- AST guard: tidak ada pemanggilan aktif `worksheet.format(...)`
+### 1. Destructive clearing Q/R
 
-Tidak perlu mengubah:
-- run_bsre.ps1
-- .env
-- credentials
-- requirements.txt
-- Windows Task Scheduler
+Versi sebelumnya mengubah:
 
-Deploy VPS:
-1. Backup source saat ini.
-2. Replace dua file Python dan `tests/test_both_bsre_modes.py`.
-3. Opsional: replace README.md dan docs/LOGGING.md.
-4. Jalankan:
-   `.\venv\Scripts\python.exe -m unittest tests.test_both_bsre_modes -v`
-5. Jika OK, jalankan:
-   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\BSRE-Automation\run_bsre.ps1"`
-6. Periksa log terbaru dan cocokkan `Total cell berubah` dengan daftar `Cell yang diperbarui`.
+```text
+NO_CERTIFICATE / NOT_FOUND
+        ↓
+tanggal baru = ""
+        ↓
+existing date != ""
+        ↓
+Q/R ditulis ulang menjadi kosong
+```
+
+Patch mengubah policy menjadi **preserve existing date** untuk profile yang tidak menyediakan tanggal usable.
+
+### 2. False positive akibat representasi tanggal
+
+Nilai Sheet dapat tampil berbeda dari ISO API walaupun tanggalnya sama. Normalisasi sekarang mencakup lebih banyak format sehingga contoh berikut dianggap ekuivalen:
+
+```text
+12-Agu-2026
+12-Aug-2026
+12/08/2026
+12/08/26
+12.08.2026
+2026-08-12
+2026-08-12 00:00:00
+2026-08-12T00:00:00
+```
+
+### 3. Issue date hanya dihitung dari expiry
+
+Patch memprioritaskan actual issue/start field bila response API memilikinya. Jika tidak tersedia, behavior lama `expiry - 2 years` tetap digunakan.
+
+### 4. Concurrent scheduled/manual execution
+
+`run_bsre.ps1` sekarang memakai named mutex `Global\BSRE-Automation-Sync`. Instance kedua keluar dengan code `2` dan membuat log `SKIPPED_ALREADY_RUNNING`.
+
+### 5. False SUCCESS pada all-rows exception
+
+Unhandled exception pada mode all-rows sekarang memanggil `sys.exit(1)`, sehingga PowerShell menerima exit code gagal yang benar.
+
+## Invariant setelah patch
+
+- No change => no write.
+- Same date, different display format => no write.
+- Profile not usable => existing Q/R preserved.
+- Only changed O/P/Q/R cell enters `batch_update`.
+- No mass formatting/value write to `Q2:R`.
+- One sync process at a time.

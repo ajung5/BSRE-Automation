@@ -17,28 +17,13 @@ from google.oauth2.service_account import Credentials
 
 load_dotenv()
 
-
-# ============================================================
-# BSrE API
-# ============================================================
-
 BASE_URL = os.getenv("BSRE_BASE_URL")
 USERNAME = os.getenv("BSRE_USERNAME")
 PASSWORD = os.getenv("BSRE_PASSWORD")
 
-
-# ============================================================
-# GOOGLE SHEETS & SPREADSHEET KONFIGURASI
-# ============================================================
-
 GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME")
-
-
-# ============================================================
-# MAPPING STATUS API
-# ============================================================
 
 STATUS_MAPPING = {
     "ISSUE": "Issued",
@@ -48,26 +33,25 @@ STATUS_MAPPING = {
     "EXPIRED": "Expired",
 }
 
-
-# ============================================================
-# DELAY API
-# ============================================================
-
 REQUEST_DELAY = 0.1
-
-
-# ============================================================
-# HEARTBEAT / PROGRESS LOG
-# ============================================================
-
-# Menulis progress ke log setiap 500 row.
-# Tidak menampilkan detail setiap NIK agar file log tetap ringkas.
 HEARTBEAT_INTERVAL = 500
 
+# Field alternatif hanya dibaca jika memang ada pada response API.
+# Fallback perilaku lama tetap dipertahankan.
+ISSUE_DATE_FIELDS = (
+    "berlaku_mulai",
+    "tanggal_terbit",
+    "tanggal_mulai",
+    "not_before",
+    "valid_from",
+)
 
-# ============================================================
-# MAPPING BULAN UNTUK NORMALISASI TANGGAL
-# ============================================================
+EXPIRY_DATE_FIELDS = (
+    "berlaku_sampai",
+    "tanggal_berakhir",
+    "not_after",
+    "valid_to",
+)
 
 BULAN_MAPPING = {
     "jan": 1,
@@ -115,54 +99,69 @@ BULAN_MAPPING = {
 
 
 def ambil_nilai_cell(row, index):
-    """
-    Mengambil nilai cell dari row secara aman.
-    Index menggunakan zero-based index.
-
-    O = 14
-    P = 15
-    Q = 16
-    R = 17
-    """
+    """Mengambil nilai cell secara aman. O=14, P=15, Q=16, R=17."""
     if len(row) > index:
         return str(row[index]).strip()
-
     return ""
+
+
+def _format_tahun_2_digit(tahun):
+    """Mengubah 2 digit year menjadi 4 digit mengikuti datetime %y."""
+    if len(tahun) == 2:
+        return datetime.strptime(tahun, "%y").strftime("%Y")
+    return tahun
 
 
 def normalisasi_tanggal(value):
     """
-    Menormalisasi berbagai format tanggal menjadi YYYY-MM-DD
-    agar tanggal yang sama tidak dianggap berubah hanya karena
-    format tampilannya berbeda.
+    Normalisasi tanggal ke YYYY-MM-DD untuk perbandingan idempotent.
 
-    Contoh yang didukung:
+    Format yang ditangani antara lain:
     - 2026-08-12
-    - 12-08-2026
-    - 12/08/2026
-    - 12-Agu-2026
-    - 12-Aug-2026
-    - 12 Agustus 2026
-    - 12 August 2026
+    - 12-08-2026 / 12/08/2026 / 12.08.2026
+    - 12-08-26 / 12/08/26 / 12.08.26
+    - 12-Agu-2026 / 12-Aug-2026 / 12 Agustus 2026
+    - 2026-08-12 00:00:00 / ISO datetime
+
+    Jika format tidak dikenali, nilai asli dikembalikan supaya perbedaan
+    nyata tetap terdeteksi dan dapat dilihat pada diagnostic log.
     """
     if value is None:
         return ""
 
-    value = str(value).strip()
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
 
+    value = str(value).strip()
     if not value:
         return ""
 
-    # Bersihkan spasi ganda.
     value = re.sub(r"\s+", " ", value)
 
-    # Format numerik yang umum.
-    formats = [
+    # ISO datetime, termasuk bentuk dengan timezone/Z.
+    if re.match(r"^\d{4}-\d{1,2}-\d{1,2}[T ]", value):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
+    formats = (
         "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
         "%d-%m-%Y",
         "%d/%m/%Y",
-        "%Y/%m/%d",
-    ]
+        "%d.%m.%Y",
+        "%d-%m-%y",
+        "%d/%m/%y",
+        "%d.%m.%y",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+        "%d.%m.%Y %H:%M:%S",
+    )
 
     for fmt in formats:
         try:
@@ -170,60 +169,114 @@ def normalisasi_tanggal(value):
         except ValueError:
             pass
 
-    # Format dengan nama bulan, baik menggunakan '-' '/' maupun spasi.
-    value_normalized = value.replace("/", "-").replace(" ", "-")
-    value_normalized = re.sub(r"-+", "-", value_normalized)
-    parts = value_normalized.split("-")
+    # dd-Bulan-yyyy / yyyy-Bulan-dd; separator -, /, ., atau spasi.
+    match = re.match(
+        r"^(\d{1,4})[-/. ]+([A-Za-z]+)[-/. ]+(\d{1,4})(?:[ T].*)?$",
+        value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        p1, bulan_text, p3 = match.groups()
+        bulan = BULAN_MAPPING.get(bulan_text.lower().rstrip("."))
+        if bulan:
+            try:
+                if len(p1) == 4:
+                    tahun = int(p1)
+                    hari = int(p3)
+                else:
+                    hari = int(p1)
+                    tahun = int(_format_tahun_2_digit(p3))
 
-    if len(parts) == 3:
-        try:
-            # dd-mmm-yyyy / dd-bulan-yyyy
-            if len(parts[0]) <= 2:
-                hari = int(parts[0])
-                bulan_text = parts[1].strip().lower().rstrip(".")
-                tahun = int(parts[2])
+                parsed = datetime(tahun, bulan, hari)
+                return parsed.strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
 
-                bulan = BULAN_MAPPING.get(bulan_text)
-
-                if bulan:
-                    return f"{tahun:04d}-{bulan:02d}-{hari:02d}"
-
-            # yyyy-mmm-dd / yyyy-bulan-dd
-            if len(parts[0]) == 4:
-                tahun = int(parts[0])
-                bulan_text = parts[1].strip().lower().rstrip(".")
-                hari = int(parts[2])
-
-                bulan = BULAN_MAPPING.get(bulan_text)
-
-                if bulan:
-                    return f"{tahun:04d}-{bulan:02d}-{hari:02d}"
-
-        except (ValueError, TypeError):
-            pass
-
-    # Jika format tidak dikenali, kembalikan string asli.
-    # Dengan demikian nilai yang benar-benar berbeda tetap akan di-update.
     return value
 
 
+def tanggal_iso_valid(value):
+    """True bila value dapat dinormalisasi menjadi tanggal ISO valid."""
+    normalized = normalisasi_tanggal(value)
+    try:
+        datetime.strptime(normalized, "%Y-%m-%d")
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def nilai_teks_berubah(nilai_lama, nilai_baru):
-    """
-    Membandingkan nilai teks setelah trim.
-    Perbandingan tetap case-sensitive agar nilai di Sheet mengikuti
-    format canonical dari hasil API.
-    """
     lama = "" if nilai_lama is None else str(nilai_lama).strip()
     baru = "" if nilai_baru is None else str(nilai_baru).strip()
-
     return lama != baru
 
 
 def nilai_tanggal_berubah(nilai_lama, nilai_baru):
-    """
-    Membandingkan tanggal setelah dinormalisasi.
-    """
     return normalisasi_tanggal(nilai_lama) != normalisasi_tanggal(nilai_baru)
+
+
+def _ambil_field_tanggal(certificate, candidates):
+    for field in candidates:
+        raw = certificate.get(field)
+        if raw not in (None, "") and tanggal_iso_valid(raw):
+            return normalisasi_tanggal(raw), field
+    return None, None
+
+
+def ekstrak_tanggal_sertifikat(certificate):
+    """
+    Mengambil tanggal terbit/berakhir dari object sertifikat.
+
+    Tanggal berakhir wajib valid agar sertifikat dapat dipakai.
+    Tanggal terbit memakai field API jika tersedia; jika tidak tersedia,
+    mempertahankan fallback legacy: tanggal berakhir - 2 tahun.
+    """
+    tanggal_berakhir, expiry_field = _ambil_field_tanggal(
+        certificate,
+        EXPIRY_DATE_FIELDS,
+    )
+    if not tanggal_berakhir:
+        return None
+
+    expired_dt = datetime.strptime(tanggal_berakhir, "%Y-%m-%d")
+
+    tanggal_terbit, issue_field = _ambil_field_tanggal(
+        certificate,
+        ISSUE_DATE_FIELDS,
+    )
+
+    if tanggal_terbit:
+        sumber_terbit = issue_field
+    else:
+        tanggal_terbit = (expired_dt - relativedelta(years=2)).strftime("%Y-%m-%d")
+        sumber_terbit = "fallback_expiry_minus_2_years"
+
+    return {
+        "tanggal_expired_dt": expired_dt,
+        "tanggal_terbit": tanggal_terbit,
+        "tanggal_berakhir": tanggal_berakhir,
+        "sumber_tanggal_terbit": sumber_terbit,
+        "sumber_tanggal_berakhir": expiry_field,
+        "data": certificate,
+    }
+
+
+def log_date_diff(cell, nilai_lama, nilai_baru, source=None):
+    extra = f" | source={source}" if source else ""
+    print(
+        f"[DATE-DIFF] {cell} | "
+        f"old_raw={nilai_lama!r} old_norm={normalisasi_tanggal(nilai_lama)!r} | "
+        f"new_raw={nilai_baru!r} new_norm={normalisasi_tanggal(nilai_baru)!r}"
+        f"{extra}"
+    )
+
+
+def log_date_preserve(nomor_baris, status_prof, tanggal_terbit_lama, tanggal_berakhir_lama):
+    if tanggal_terbit_lama or tanggal_berakhir_lama:
+        print(
+            f"[DATE-PRESERVE] row={nomor_baris} status={status_prof} | "
+            f"Q={tanggal_terbit_lama!r} R={tanggal_berakhir_lama!r}"
+        )
 
 
 # ============================================================
@@ -254,12 +307,11 @@ def koneksi_google():
     client = gspread.authorize(credentials)
     spreadsheet = client.open_by_key(SPREADSHEET_ID)
     worksheet = spreadsheet.worksheet(WORKSHEET_NAME)
-
     return client, spreadsheet, worksheet
 
 
 # ============================================================
-# CEK PROFILE BSrE (TANGGAL)
+# API BSrE
 # ============================================================
 
 
@@ -283,72 +335,46 @@ def cek_profile_sertifikat(nik):
             if not success:
                 return {
                     "status": "NO_DATA",
-                    "tanggal_terbit": "",
-                    "tanggal_berakhir": "",
+                    "tanggal_terbit": None,
+                    "tanggal_berakhir": None,
                 }
 
-            profile_data = data.get("data", {})
-            certificates = profile_data.get("sertifikat", [])
+            profile_data = data.get("data", {}) or {}
+            certificates = profile_data.get("sertifikat", []) or []
 
             if not certificates:
                 return {
                     "status": "NO_CERTIFICATE",
-                    "tanggal_terbit": "",
-                    "tanggal_berakhir": "",
+                    "tanggal_terbit": None,
+                    "tanggal_berakhir": None,
                 }
 
             daftar_sertifikat_valid = []
-
             for certificate in certificates:
-                berlaku_sampai = certificate.get("berlaku_sampai", "")
-
-                if not berlaku_sampai:
+                if not isinstance(certificate, dict):
                     continue
-
-                try:
-                    tanggal_expired = datetime.strptime(
-                        berlaku_sampai,
-                        "%d-%m-%Y",
-                    )
-
-                    daftar_sertifikat_valid.append(
-                        {
-                            "tanggal": tanggal_expired,
-                            "data": certificate,
-                        }
-                    )
-
-                except ValueError:
-                    continue
+                parsed = ekstrak_tanggal_sertifikat(certificate)
+                if parsed:
+                    daftar_sertifikat_valid.append(parsed)
 
             if not daftar_sertifikat_valid:
                 return {
                     "status": "NO_CERTIFICATE_DATE",
-                    "tanggal_terbit": "",
-                    "tanggal_berakhir": "",
+                    "tanggal_terbit": None,
+                    "tanggal_berakhir": None,
                 }
 
-            # Ambil sertifikat dengan tanggal berakhir paling akhir.
-            daftar_sertifikat_valid.sort(
-                key=lambda x: x["tanggal"],
-                reverse=True,
+            certificate_terbaru = max(
+                daftar_sertifikat_valid,
+                key=lambda item: item["tanggal_expired_dt"],
             )
-
-            certificate_terbaru = daftar_sertifikat_valid[0]
-            tanggal_expired = certificate_terbaru["tanggal"]
-
-            # Mengikuti logika script sebelumnya:
-            # tanggal terbit dihitung 2 tahun sebelum tanggal berakhir.
-            tanggal_issue = tanggal_expired - relativedelta(years=2)
-
-            # Gunakan format ISO agar Google Sheets menerima sebagai tanggal.
-            tanggal_terbit = tanggal_issue.strftime("%Y-%m-%d")
-            tanggal_berakhir = tanggal_expired.strftime("%Y-%m-%d")
 
             return {
                 "status": "SUCCESS",
-                "tanggal_terbit": tanggal_terbit,
-                "tanggal_berakhir": tanggal_berakhir,
+                "tanggal_terbit": certificate_terbaru["tanggal_terbit"],
+                "tanggal_berakhir": certificate_terbaru["tanggal_berakhir"],
+                "sumber_tanggal_terbit": certificate_terbaru["sumber_tanggal_terbit"],
+                "sumber_tanggal_berakhir": certificate_terbaru["sumber_tanggal_berakhir"],
             }
 
         if response.status_code == 401:
@@ -358,8 +384,8 @@ def cek_profile_sertifikat(nik):
         if response.status_code == 404:
             return {
                 "status": "NOT_FOUND",
-                "tanggal_terbit": "",
-                "tanggal_berakhir": "",
+                "tanggal_terbit": None,
+                "tanggal_berakhir": None,
             }
 
         print(f"\nHTTP ERROR {response.status_code} - NIK {nik} (Profile)")
@@ -368,11 +394,6 @@ def cek_profile_sertifikat(nik):
     except Exception as e:
         print(f"\nERROR PROFILE - NIK {nik}: {e}")
         return None
-
-
-# ============================================================
-# CEK STATUS SERTIFIKAT BSrE
-# ============================================================
 
 
 def cek_status_sertifikat(nik):
@@ -439,68 +460,43 @@ def proses_google_sheet():
 
     if not SPREADSHEET_ID or SPREADSHEET_ID == "ISI_ID_GOOGLE_SPREADSHEET":
         raise ValueError("\nSPREADSHEET_ID belum diisi.")
-
     if not WORKSHEET_NAME:
         raise ValueError("\nWORKSHEET_NAME belum diisi.")
 
     print("Menghubungkan ke Google Spreadsheet...")
-    client, spreadsheet, worksheet = koneksi_google()
+    _, _, worksheet = koneksi_google()
     print("Berhasil terhubung.\n")
 
     print("Mengambil seluruh data spreadsheet...")
     data = worksheet.get_all_values()
-
     if not data:
         print("Spreadsheet kosong.")
         return
 
     header = data[0]
-
     try:
         kolom_nik_index = header.index("NIK") + 1
-    except ValueError:
-        raise ValueError("\nKolom 'NIK' tidak ditemukan.")
+    except ValueError as exc:
+        raise ValueError("\nKolom 'NIK' tidak ditemukan.") from exc
 
     if kolom_nik_index != 3:
-        print(f"\nPERINGATAN: Kolom NIK ditemukan di posisi " f"{kolom_nik_index}, bukan kolom C.\n")
-
-    # ========================================================
-    # HEADER Q & R - UPDATE HANYA JIKA BERBEDA
-    # ========================================================
+        print(
+            f"\nPERINGATAN: Kolom NIK ditemukan di posisi {kolom_nik_index}, "
+            "bukan kolom C.\n"
+        )
 
     header_updates = []
-
-    header_q_lama = ambil_nilai_cell(header, 16)
-    header_r_lama = ambil_nilai_cell(header, 17)
-
-    if header_q_lama != "Tanggal terbit":
-        header_updates.append(
-            {
-                "range": "Q1",
-                "values": [["Tanggal terbit"]],
-            }
-        )
-
-    if header_r_lama != "Tanggal berakhir":
-        header_updates.append(
-            {
-                "range": "R1",
-                "values": [["Tanggal berakhir"]],
-            }
-        )
+    if ambil_nilai_cell(header, 16) != "Tanggal terbit":
+        header_updates.append({"range": "Q1", "values": [["Tanggal terbit"]]})
+    if ambil_nilai_cell(header, 17) != "Tanggal berakhir":
+        header_updates.append({"range": "R1", "values": [["Tanggal berakhir"]]})
 
     if header_updates:
-        worksheet.batch_update(
-            header_updates,
-            value_input_option="USER_ENTERED",
-        )
-
+        worksheet.batch_update(header_updates, value_input_option="USER_ENTERED")
         print("\nHeader yang diperbarui:")
         for item in header_updates:
             print(f"- {item['range']}")
 
-    # Semua row diproses, termasuk row hidden atau terkena filter.
-    # Baris 1 adalah header, sehingga data dimulai dari baris 2.
     total_row = len(data) - 1
     semua_row_data = list(range(2, len(data) + 1))
 
@@ -508,27 +504,15 @@ def proses_google_sheet():
     print(f"Total row diproses   : {len(semua_row_data)}")
     print("Mode                 : SEMUA ROW")
     print("Update               : HANYA CELL O/P/Q/R YANG BERUBAH")
+    print("Date policy          : PRESERVE existing Q/R jika profile tidak usable")
     print(f"Heartbeat            : SETIAP {HEARTBEAT_INTERVAL} ROW\n")
 
-    # Semua cell yang benar-benar berubah akan dikumpulkan di sini
-    # lalu ditulis sekaligus menggunakan batch update.
     update_cells = []
     row_yang_diubah = set()
 
-    # ========================================================
-    # STATISTIK PERUBAHAN CELL
-    # ========================================================
-
-    perubahan_o = 0
-    perubahan_p = 0
-    perubahan_q = 0
-    perubahan_r = 0
-
+    perubahan_o = perubahan_p = perubahan_q = perubahan_r = 0
     jumlah_row_tanpa_perubahan = 0
-
-    # ========================================================
-    # STATISTIK PROFILE
-    # ========================================================
+    jumlah_tanggal_dipertahankan = 0
 
     jumlah_sukses = 0
     jumlah_tidak_ada_sertifikat = 0
@@ -536,76 +520,33 @@ def proses_google_sheet():
     jumlah_tanggal_tidak_valid = 0
     jumlah_no_data = 0
 
-    # ========================================================
-    # STATISTIK STATUS
-    # ========================================================
-
-    jumlah_issue = 0
-    jumlah_revoke = 0
-    jumlah_renew = 0
-    jumlah_no_certificate = 0
-    jumlah_expired = 0
-    jumlah_not_registered = 0
-    jumlah_tidak_diubah = 0
-
-    jumlah_nik_kosong = 0
-    jumlah_error = 0
-
-    # ========================================================
-    # HEARTBEAT / PROGRESS MONITORING
-    # ========================================================
+    jumlah_issue = jumlah_revoke = jumlah_renew = 0
+    jumlah_no_certificate = jumlah_expired = 0
+    jumlah_not_registered = jumlah_tidak_diubah = 0
+    jumlah_nik_kosong = jumlah_error = 0
 
     waktu_mulai_proses = time.monotonic()
     total_diproses = len(semua_row_data)
 
     def format_durasi(total_detik):
-        """
-        Mengubah detik menjadi format HH:MM:SS.
-        """
         total_detik = max(0, int(total_detik))
-
         jam, sisa = divmod(total_detik, 3600)
         menit, detik = divmod(sisa, 60)
-
         return f"{jam:02d}:{menit:02d}:{detik:02d}"
 
     def cetak_heartbeat(jumlah_selesai):
-        """
-        Menulis heartbeat ke stdout/log.
-
-        Contoh:
-        Progress : 500 / 18405 (2.72%) |
-                   Elapsed: 00:04:12 |
-                   ETA: 02:30:11
-        """
-        if jumlah_selesai <= 0:
+        if jumlah_selesai <= 0 or total_diproses <= 0:
             return
-
-        if total_diproses <= 0:
-            return
-
         elapsed = time.monotonic() - waktu_mulai_proses
-
         progress = (jumlah_selesai / total_diproses) * 100
-
         rata_rata_per_row = elapsed / jumlah_selesai
-
-        sisa_row = total_diproses - jumlah_selesai
-
-        estimasi_sisa = rata_rata_per_row * sisa_row
-
+        estimasi_sisa = rata_rata_per_row * (total_diproses - jumlah_selesai)
         print(
-            f"Progress : "
-            f"{jumlah_selesai} / {total_diproses} "
-            f"({progress:.2f}%) | "
-            f"Elapsed: {format_durasi(elapsed)} | "
+            f"Progress : {jumlah_selesai} / {total_diproses} "
+            f"({progress:.2f}%) | Elapsed: {format_durasi(elapsed)} | "
             f"ETA: {format_durasi(estimasi_sisa)}",
             flush=True,
         )
-
-    # ========================================================
-    # LOOP SELURUH ROW
-    # ========================================================
 
     for index_proses, nomor_baris in enumerate(
         tqdm(
@@ -616,29 +557,19 @@ def proses_google_sheet():
         ),
         start=1,
     ):
-
-        jumlah_selesai_sebelumnya = index_proses - 1
-
-        if jumlah_selesai_sebelumnya > 0 and jumlah_selesai_sebelumnya % HEARTBEAT_INTERVAL == 0:
-            cetak_heartbeat(jumlah_selesai_sebelumnya)
-
-        if nomor_baris > len(data):
-            continue
+        selesai_sebelumnya = index_proses - 1
+        if selesai_sebelumnya > 0 and selesai_sebelumnya % HEARTBEAT_INTERVAL == 0:
+            cetak_heartbeat(selesai_sebelumnya)
 
         row = data[nomor_baris - 1]
-
-        if len(row) >= kolom_nik_index:
-            nik = str(row[kolom_nik_index - 1]).strip()
-        else:
-            nik = ""
-
+        nik = (
+            str(row[kolom_nik_index - 1]).strip()
+            if len(row) >= kolom_nik_index
+            else ""
+        )
         if not nik or nik.lower() in {"nan", "none"}:
             jumlah_nik_kosong += 1
             continue
-
-        # ====================================================
-        # REQUEST KEDUA API
-        # ====================================================
 
         hasil_status = cek_status_sertifikat(nik)
         hasil_profile = cek_profile_sertifikat(nik)
@@ -648,71 +579,35 @@ def proses_google_sheet():
             time.sleep(REQUEST_DELAY)
             continue
 
-        row_updated_in_this_iter = False
+        row_updated = False
 
-        # ====================================================
-        # NILAI SAAT INI DI GOOGLE SHEETS
-        # ====================================================
+        status_pengguna_lama = ambil_nilai_cell(row, 14)
+        status_sertifikat_lama = ambil_nilai_cell(row, 15)
+        tanggal_terbit_lama = ambil_nilai_cell(row, 16)
+        tanggal_berakhir_lama = ambil_nilai_cell(row, 17)
 
-        status_pengguna_lama = ambil_nilai_cell(
-            row,
-            14,
-        )
-
-        status_sertifikat_lama = ambil_nilai_cell(
-            row,
-            15,
-        )
-
-        tanggal_terbit_lama = ambil_nilai_cell(
-            row,
-            16,
-        )
-
-        tanggal_berakhir_lama = ambil_nilai_cell(
-            row,
-            17,
-        )
-
-        # ====================================================
-        # UPDATE STATUS - KOLOM O & P
-        # ====================================================
-
+        # ---------------- STATUS O/P ----------------
         if hasil_status["update"]:
             status_pengguna_baru = hasil_status["status_pengguna"]
-
             status_sertifikat_baru = hasil_status["status_sertifikat"]
 
-            if nilai_teks_berubah(
-                status_pengguna_lama,
-                status_pengguna_baru,
-            ):
-                update_cells.append(
-                    {
-                        "range": f"O{nomor_baris}",
-                        "values": [[status_pengguna_baru]],
-                    }
-                )
-
+            if nilai_teks_berubah(status_pengguna_lama, status_pengguna_baru):
+                update_cells.append({
+                    "range": f"O{nomor_baris}",
+                    "values": [[status_pengguna_baru]],
+                })
                 perubahan_o += 1
-                row_updated_in_this_iter = True
+                row_updated = True
 
-            if nilai_teks_berubah(
-                status_sertifikat_lama,
-                status_sertifikat_baru,
-            ):
-                update_cells.append(
-                    {
-                        "range": f"P{nomor_baris}",
-                        "values": [[status_sertifikat_baru]],
-                    }
-                )
-
+            if nilai_teks_berubah(status_sertifikat_lama, status_sertifikat_baru):
+                update_cells.append({
+                    "range": f"P{nomor_baris}",
+                    "values": [[status_sertifikat_baru]],
+                })
                 perubahan_p += 1
-                row_updated_in_this_iter = True
+                row_updated = True
 
             status_api = hasil_status["status_api"]
-
             if status_api == "ISSUE":
                 jumlah_issue += 1
             elif status_api == "REVOKE":
@@ -723,166 +618,118 @@ def proses_google_sheet():
                 jumlah_no_certificate += 1
             elif status_api == "EXPIRED":
                 jumlah_expired += 1
-
         else:
             if hasil_status.get("status_api") == "NOT_REGISTERED":
                 jumlah_not_registered += 1
             else:
                 jumlah_tidak_diubah += 1
 
-        # ====================================================
-        # PROFILE TANGGAL - KOLOM Q & R
-        # ====================================================
-
-        status_prof = hasil_profile.get(
-            "status",
-            "",
-        )
-
+        # ---------------- TANGGAL Q/R ----------------
+        status_prof = hasil_profile.get("status", "")
         tanggal_terbit_baru = None
         tanggal_berakhir_baru = None
 
         if status_prof == "SUCCESS":
-            tanggal_terbit_baru = hasil_profile["tanggal_terbit"]
-
-            tanggal_berakhir_baru = hasil_profile["tanggal_berakhir"]
-
+            tanggal_terbit_baru = hasil_profile.get("tanggal_terbit")
+            tanggal_berakhir_baru = hasil_profile.get("tanggal_berakhir")
             jumlah_sukses += 1
-
         elif status_prof == "NO_CERTIFICATE":
             jumlah_tidak_ada_sertifikat += 1
-            tanggal_terbit_baru = ""
-            tanggal_berakhir_baru = ""
-
         elif status_prof == "NOT_FOUND":
             jumlah_tidak_ditemukan += 1
-            tanggal_terbit_baru = ""
-            tanggal_berakhir_baru = ""
-
         elif status_prof == "NO_CERTIFICATE_DATE":
             jumlah_tanggal_tidak_valid += 1
-
         elif status_prof == "NO_DATA":
             jumlah_no_data += 1
 
-        # ====================================================
-        # BANDINGKAN Q - TANGGAL TERBIT
-        # ====================================================
+        # Non-destructive policy: profile yang tidak usable tidak boleh
+        # menghapus/mengubah Q/R yang sudah ada.
+        if status_prof != "SUCCESS":
+            if tanggal_terbit_lama or tanggal_berakhir_lama:
+                jumlah_tanggal_dipertahankan += 1
+            log_date_preserve(
+                nomor_baris,
+                status_prof,
+                tanggal_terbit_lama,
+                tanggal_berakhir_lama,
+            )
 
-        if tanggal_terbit_baru is not None:
-            if nilai_tanggal_berubah(
+        if tanggal_terbit_baru is not None and nilai_tanggal_berubah(
+            tanggal_terbit_lama,
+            tanggal_terbit_baru,
+        ):
+            log_date_diff(
+                f"Q{nomor_baris}",
                 tanggal_terbit_lama,
                 tanggal_terbit_baru,
-            ):
-                update_cells.append(
-                    {
-                        "range": f"Q{nomor_baris}",
-                        "values": [[tanggal_terbit_baru]],
-                    }
-                )
+                hasil_profile.get("sumber_tanggal_terbit"),
+            )
+            update_cells.append({
+                "range": f"Q{nomor_baris}",
+                "values": [[tanggal_terbit_baru]],
+            })
+            perubahan_q += 1
+            row_updated = True
 
-                perubahan_q += 1
-                row_updated_in_this_iter = True
-
-        # ====================================================
-        # BANDINGKAN R - TANGGAL BERAKHIR
-        # ====================================================
-
-        if tanggal_berakhir_baru is not None:
-            if nilai_tanggal_berubah(
+        if tanggal_berakhir_baru is not None and nilai_tanggal_berubah(
+            tanggal_berakhir_lama,
+            tanggal_berakhir_baru,
+        ):
+            log_date_diff(
+                f"R{nomor_baris}",
                 tanggal_berakhir_lama,
                 tanggal_berakhir_baru,
-            ):
-                update_cells.append(
-                    {
-                        "range": f"R{nomor_baris}",
-                        "values": [[tanggal_berakhir_baru]],
-                    }
-                )
+                hasil_profile.get("sumber_tanggal_berakhir"),
+            )
+            update_cells.append({
+                "range": f"R{nomor_baris}",
+                "values": [[tanggal_berakhir_baru]],
+            })
+            perubahan_r += 1
+            row_updated = True
 
-                perubahan_r += 1
-                row_updated_in_this_iter = True
-
-        # ====================================================
-        # CATAT ROW BERUBAH / TIDAK BERUBAH
-        # ====================================================
-
-        if row_updated_in_this_iter:
+        if row_updated:
             row_yang_diubah.add(nomor_baris)
         else:
             jumlah_row_tanpa_perubahan += 1
 
         time.sleep(REQUEST_DELAY)
 
-    # ========================================================
-    # HEARTBEAT TERAKHIR
-    # ========================================================
-
     if total_diproses > 0:
         cetak_heartbeat(total_diproses)
 
-    # ========================================================
-    # UPDATE GOOGLE SHEETS BATCH
-    # ========================================================
-
     print("\nMengupdate Google Spreadsheet...\n")
-
     if update_cells:
-        worksheet.batch_update(
-            update_cells,
-            value_input_option="USER_ENTERED",
-        )
-
-        print(f"Berhasil mengupdate {len(update_cells)} cell " "yang benar-benar berubah.")
-
+        worksheet.batch_update(update_cells, value_input_option="USER_ENTERED")
+        print(f"Berhasil mengupdate {len(update_cells)} cell yang benar-benar berubah.")
         print("\nCell yang diperbarui:")
         for item in update_cells:
             print(f"- {item['range']}")
-
-        # PENTING:
-        # Tidak ada worksheet.format("Q2:R", ...).
-        # Google Sheets hanya menerima write pada cell individual
-        # O/P/Q/R yang nilainya benar-benar berubah.
-
     else:
-        print("Tidak ada perubahan data. " "Tidak ada cell O/P/Q/R yang diupdate.")
-
-    # ========================================================
-    # HASIL AKHIR
-    # ========================================================
+        print("Tidak ada perubahan data. Tidak ada cell O/P/Q/R yang diupdate.")
 
     total_cell_berubah = perubahan_o + perubahan_p + perubahan_q + perubahan_r
-
     if total_cell_berubah != len(update_cells):
         raise RuntimeError(
             "Inkonsistensi internal: total_cell_berubah "
-            f"({total_cell_berubah}) != jumlah update_cells "
-            f"({len(update_cells)})."
+            f"({total_cell_berubah}) != jumlah update_cells ({len(update_cells)})."
         )
 
     print("\n" + "=" * 70)
     print(" HASIL PENGECEKAN")
     print("=" * 70 + "\n")
-
-    print(f"Total row data            : " f"{total_row}")
-
-    print(f"Total row diproses        : " f"{len(semua_row_data)}")
-
-    print(f"Total row berubah         : " f"{len(row_yang_diubah)}")
-
-    print(f"Total row tanpa perubahan : " f"{jumlah_row_tanpa_perubahan}")
-
-    print(f"Total cell berubah        : " f"{total_cell_berubah}\n")
+    print(f"Total row data            : {total_row}")
+    print(f"Total row diproses        : {len(semua_row_data)}")
+    print(f"Total row berubah         : {len(row_yang_diubah)}")
+    print(f"Total row tanpa perubahan : {jumlah_row_tanpa_perubahan}")
+    print(f"Total cell berubah        : {total_cell_berubah}")
+    print(f"Tanggal dipertahankan     : {jumlah_tanggal_dipertahankan}\n")
 
     print("--- PERUBAHAN CELL ---")
-
-    print(f"Status Pengguna (O)       : " f"{perubahan_o}")
-
-    print(f"Status Sertifikat (P)     : " f"{perubahan_p}")
-
-    print(f"Tanggal terbit (Q)        : " f"{perubahan_q}")
-
-    print(f"Tanggal berakhir (R)      : " f"{perubahan_r}\n")
+    print(f"Status Pengguna (O)       : {perubahan_o}")
+    print(f"Status Sertifikat (P)     : {perubahan_p}")
+    print(f"Tanggal terbit (Q)        : {perubahan_q}")
+    print(f"Tanggal berakhir (R)      : {perubahan_r}\n")
 
     print("--- STATISTIK STATUS ---")
     print(f"ISSUE              : {jumlah_issue}")
@@ -894,47 +741,29 @@ def proses_google_sheet():
     print(f"Tidak diubah       : {jumlah_tidak_diubah}\n")
 
     print("--- STATISTIK PROFILE ---")
+    print(f"Tanggal ditemukan         : {jumlah_sukses}")
+    print(f"Tidak ada sertifikat      : {jumlah_tidak_ada_sertifikat}")
+    print(f"NIK tidak ditemukan       : {jumlah_tidak_ditemukan}")
+    print(f"Tanggal tidak valid       : {jumlah_tanggal_tidak_valid}")
+    print(f"Profile tanpa data        : {jumlah_no_data}\n")
 
-    print(f"Tanggal ditemukan         : " f"{jumlah_sukses}")
-
-    print(f"Tidak ada sertifikat      : " f"{jumlah_tidak_ada_sertifikat}")
-
-    print(f"NIK tidak ditemukan       : " f"{jumlah_tidak_ditemukan}")
-
-    print(f"Tanggal tidak valid       : " f"{jumlah_tanggal_tidak_valid}")
-
-    print(f"Profile tanpa data        : " f"{jumlah_no_data}\n")
-
-    print(f"NIK kosong                : " f"{jumlah_nik_kosong}")
-
-    print(f"Error gabungan            : " f"{jumlah_error}\n")
-
-    print("Kolom O = Status Pengguna")
-    print("Kolom P = Status Sertifikat")
-    print("Kolom Q = Tanggal terbit")
-    print("Kolom R = Tanggal berakhir\n")
-
-    print("Semua row tetap diperiksa ke API BSrE.")
-
-    print("Google Sheets hanya diupdate pada " "cell O/P/Q/R yang berubah.")
-
+    print(f"NIK kosong                : {jumlah_nik_kosong}")
+    print(f"Error gabungan            : {jumlah_error}\n")
+    print("Google Sheets hanya diupdate pada cell O/P/Q/R yang berubah.")
+    print("Q/R dipertahankan ketika profile BSrE tidak menyediakan tanggal usable.")
     print("Tidak ada write/format massal ke range Q2:R.\n")
 
-
-# ============================================================
-# MAIN
-# ============================================================
 
 if __name__ == "__main__":
     try:
         proses_google_sheet()
-
     except KeyboardInterrupt:
         print("\nProses dihentikan oleh pengguna.")
-
+        sys.exit(130)
     except Exception as e:
         print("\n" + "=" * 70)
         print("ERROR")
         print("=" * 70 + "\n")
         print(str(e))
         print()
+        sys.exit(1)

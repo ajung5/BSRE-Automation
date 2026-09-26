@@ -2,189 +2,149 @@
 
 Automasi sinkronisasi **status pengguna dan sertifikat elektronik BSrE** dari API ke Google Spreadsheet berdasarkan NIK.
 
-Project menyediakan dua mode pemrosesan:
+Project menyediakan dua mode:
 
-- **Filtered / Visible Rows** — hanya memproses row yang terlihat.
-- **All Rows** — memproses seluruh row tanpa dipengaruhi filter/hidden row.
+- **Filtered / Visible Rows** — hanya row yang terlihat.
+- **All Rows** — seluruh row, termasuk hidden/filter.
 
-Kedua mode menggunakan **strict differential update**: hanya cell pada kolom **O, P, Q, dan R yang nilainya benar-benar berubah** yang ditulis kembali ke Google Sheets.
+Keduanya menggunakan **strict differential write**: Google Sheets hanya menerima update untuk cell O/P/Q/R yang secara semantik benar-benar berubah.
 
-> **Catatan:** repository ini merupakan utility automation independen. Pastikan penggunaan API, credential, dan data NIK sesuai kewenangan serta kebijakan organisasi Anda.
+## Perbaikan Date Idempotency
 
-## Fitur Utama
+Versi patch 26 September 2026 memperketat perilaku Q/R:
 
-- Sinkronisasi status pengguna dan sertifikat BSrE.
-- Dukungan mode filtered dan all-rows.
-- Strict differential update untuk mengurangi write ke Google Sheets.
-- Tidak melakukan write/format massal pada range `Q2:R`.
-- Normalisasi tanggal sebelum perbandingan.
-- Batch update hanya untuk cell individual yang berubah.
-- Audit log exact cell range yang diperbarui.
-- Statistik status dan perubahan pada akhir proses.
-- Progress heartbeat pada proses all-rows.
-- PowerShell wrapper untuk Windows automation.
-- Logging per eksekusi.
-- Dukungan Windows Task Scheduler.
-- Regression test tanpa menulis ke Google Sheets/API produksi.
+- tanggal dibandingkan setelah normalisasi;
+- format tampilan yang berbeda tetapi tanggalnya sama tidak dianggap perubahan;
+- mendukung format numerik, dua-digit year, nama bulan Indonesia/Inggris, dan datetime;
+- `NO_CERTIFICATE`, `NOT_FOUND`, `NO_DATA`, dan `NO_CERTIFICATE_DATE` **tidak menghapus tanggal lama**;
+- update tanggal dicatat dengan `[DATE-DIFF]` berisi raw value dan normalized value;
+- tanggal yang dipertahankan dicatat sebagai `[DATE-PRESERVE]`;
+- tidak ada write atau format massal ke `Q2:R`;
+- wrapper Windows memiliki single-instance mutex untuk mencegah concurrent sync;
+- mode all-rows mengembalikan exit code non-zero jika terjadi exception.
 
-## Struktur Utama
+Tujuan utamanya adalah **idempotency**: bila data API dan spreadsheet tidak berubah, run berikutnya harus menghasilkan **0 write**.
 
-```text
-BSRE-Automation/
-├── cek_nik_bsre_spreadseheet_merge.py
-├── cek_nik_bsre_spreadseheet_merge_all_rows.py
-├── run_bsre.ps1
-├── requirements.txt
-├── .env.example
-├── tests/
-├── docs/
-├── SECURITY.md
-├── CONTRIBUTING.md
-├── CHANGELOG.md
-├── LICENSE
-└── README.md
-```
+## Kolom Spreadsheet
 
-## Quick Start
+| Kolom | Fungsi |
+|---|---|
+| C / NIK | sumber NIK |
+| O | Status Pengguna |
+| P | Status Sertifikat |
+| Q | Tanggal terbit |
+| R | Tanggal berakhir |
 
-```bash
-git clone https://github.com/ajung5/BSRE-Automation.git
-cd BSRE-Automation
+## Kebijakan tanggal
 
-python -m venv venv
-```
+### Profile SUCCESS
 
-Windows:
+Q/R dibandingkan dengan nilai lama setelah normalisasi. Hanya tanggal yang benar-benar berbeda yang ditulis.
 
-```powershell
-.\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
+### Profile tidak usable
 
-macOS/Linux:
-
-```bash
-source venv/bin/activate
-python3 -m pip install -r requirements.txt
-```
-
-Buat konfigurasi dari template:
+Status berikut dianggap tidak cukup kuat untuk menghapus data historis:
 
 ```text
-.env.example → .env
+NO_CERTIFICATE
+NOT_FOUND
+NO_DATA
+NO_CERTIFICATE_DATE
 ```
 
-Kemudian sesuaikan credential BSrE, Google Service Account, Spreadsheet ID, dan Worksheet.
+Q/R lama dipertahankan.
 
-Menjalankan mode seluruh row:
+### Sumber tanggal terbit
+
+Jika object sertifikat menyediakan field tanggal mulai/terbit yang dikenali, nilainya dipakai. Candidate field:
+
+```text
+berlaku_mulai
+tanggal_terbit
+tanggal_mulai
+not_before
+valid_from
+```
+
+Jika tidak ada field valid, compatibility fallback lama tetap dipakai:
+
+```text
+tanggal terbit = tanggal berakhir - 2 tahun
+```
+
+Tanggal berakhir dicari dari candidate field:
+
+```text
+berlaku_sampai
+tanggal_berakhir
+not_after
+valid_to
+```
+
+## Menjalankan
+
+All rows:
 
 ```bash
 python cek_nik_bsre_spreadseheet_merge_all_rows.py
 ```
 
-Menjalankan mode filtered:
+Filtered rows:
 
 ```bash
 python cek_nik_bsre_spreadseheet_merge.py
+```
+
+Windows scheduled wrapper:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\BSRE-Automation\run_bsre.ps1"
+```
+
+## Regression test
+
+```bash
+python -m unittest tests.test_both_bsre_modes -v
+```
+
+Test mencakup:
+
+- equivalent date formats;
+- strict differential write;
+- preservation Q/R pada profile tidak usable;
+- pemilihan sertifikat dengan expiry terbaru;
+- penggunaan actual issue-date field bila tersedia;
+- fallback legacy expiry minus dua tahun;
+- filtered-row behavior;
+- guard terhadap mass formatting;
+- guard exit code all-rows;
+- guard single-instance wrapper.
+
+## Log penting
+
+Perubahan tanggal nyata:
+
+```text
+[DATE-DIFF] R128 | old_raw='12-Agu-2026' old_norm='2026-08-12' | new_raw='2027-08-12' new_norm='2027-08-12' | source=berlaku_sampai
+```
+
+Data lama dipertahankan karena profile tidak usable:
+
+```text
+[DATE-PRESERVE] row=128 status=NO_CERTIFICATE | Q='12-Agu-2024' R='12-Agu-2026'
 ```
 
 ## Dokumentasi
 
 | Dokumen | Isi |
 |---|---|
-| [Installation](docs/INSTALLATION.md) | Instalasi Windows, macOS, dan Linux |
-| [Configuration](docs/CONFIGURATION.md) | `.env`, Google Service Account, dan Spreadsheet |
-| [Usage](docs/USAGE.md) | Cara menjalankan kedua mode |
-| [Architecture](docs/ARCHITECTURE.md) | Alur proses dan differential update |
-| [Windows Task Scheduler](docs/WINDOWS_TASK_SCHEDULER.md) | Automation terjadwal di Windows/VPS |
-| [Logging](docs/LOGGING.md) | Struktur log, audit exact cell, dan monitoring proses |
-| [Testing](docs/TESTING.md) | Menjalankan unit test |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Diagnosis masalah umum |
-
-## Kolom Spreadsheet
-
-| Kolom | Fungsi |
-|---|---|
-| NIK | Sumber NIK |
-| O | Status Pengguna |
-| P | Status Sertifikat |
-| Q | Tanggal terbit |
-| R | Tanggal berakhir |
-
-Tanggal pada Q/R hanya ditulis ketika nilai tanggal memang berubah. Automation tidak mengatur ulang format seluruh kolom Q/R. Format tampilan tanggal mengikuti format cell yang telah dikonfigurasi di Google Spreadsheet.
-
-Jika ingin tampilan seperti `12-Agu-2026` atau `12-Aug-2026`, atur format tanggal Q/R satu kali langsung pada Google Spreadsheet.
-
-## Strict Differential Write
-
-Contoh hasil perubahan:
-
-```text
-Berhasil mengupdate 4 cell yang benar-benar berubah.
-
-Cell yang diperbarui:
-- P128
-- Q128
-- R128
-- P947
-```
-
-Dalam kondisi tersebut, request update hanya berisi `P128`, `Q128`, `R128`, dan `P947`.
-
-Tidak ada operasi:
-
-```text
-Q2:R
-```
-
-baik untuk value update maupun formatting massal.
-
-## Automation Windows
-
-Untuk penggunaan terjadwal, jalankan:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\BSRE-Automation\run_bsre.ps1"
-```
-
-Wrapper saat ini menjalankan:
-
-```text
-cek_nik_bsre_spreadseheet_merge_all_rows.py
-```
-
-Task Scheduler tidak perlu diubah setelah revisi source Python.
-
-Panduan lengkap: [Windows Task Scheduler](docs/WINDOWS_TASK_SCHEDULER.md).
-
-## Testing
-
-Jalankan:
-
-```bash
-python -m unittest tests.test_both_bsre_modes -v
-```
-
-Regression test memverifikasi antara lain:
-
-- nilai sama tidak menghasilkan write;
-- hanya cell individual yang berubah yang masuk `batch_update`;
-- perubahan Q/R hanya menulis `Qn` dan/atau `Rn`;
-- `worksheet.format()` tidak dipanggil untuk `Q2:R`;
-- log menampilkan exact cell range yang diperbarui.
+| `APPLY_PATCH.md` | langkah replace dan acceptance criteria |
+| `docs/BUGFIX_DATE_IDEMPOTENCY.md` | root cause dan desain perbaikan |
+| `docs/LOGGING.md` | diagnostic/audit log |
+| `docs/TESTING.md` | regression test |
+| `docs/TROUBLESHOOTING.md` | diagnosis bila Q/R masih berubah |
+| `docs/WINDOWS_TASK_SCHEDULER.md` | scheduler dan concurrency guard |
 
 ## Security
 
-Jangan commit:
-
-- `.env`
-- Google Service Account credential
-- username/password/token API
-- file log
-- data NIK atau export spreadsheet produksi
-
-Lihat [SECURITY.md](SECURITY.md).
-
-## License
-
-Project ini menggunakan [MIT License](LICENSE).
+Jangan commit `.env`, Google service-account JSON, username/password API, log produksi, atau export spreadsheet yang mengandung NIK.
